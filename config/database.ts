@@ -6,7 +6,6 @@ module.exports = ({ env }) => {
   //       CONFIGURACIÓN PARA PRODUCCIÓN (RENDER)
   // =================================================
   if (env('NODE_ENV') === 'production') {
-    console.log("✅ Usando configuración de PRODUCCIÓN desde config/database.js");
     const config = parse(env("DATABASE_URL"));
     return {
       connection: {
