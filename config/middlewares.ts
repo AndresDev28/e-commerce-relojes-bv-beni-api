@@ -21,7 +21,6 @@ export default [
         directives: {
           "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
           "media-src": ["'self'", "data:", "blob:", "https:", "http:"],
-          "upgrade-insecure-requests": null,
         },
       },
     },
