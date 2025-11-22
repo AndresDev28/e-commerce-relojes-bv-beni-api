@@ -1,5 +1,14 @@
 export default [
   "strapi::errors",
+  // HTTPS enforcer - must be early in the chain
+  {
+    name: "global::https-enforcer",
+    config: {
+      enabled: true,
+      redirectToHttps: false,
+      sensitiveRoutes: ["/api/orders", "/api/payments", "/api/stripe"],
+    },
+  },
   {
     name: "strapi::cors",
     config: {
@@ -21,6 +30,16 @@ export default [
           "img-src": ["'self'", "data:", "blob:", "https:", "http:"],
           "media-src": ["'self'", "data:", "blob:", "https:", "http:"],
         },
+      },
+      // HSTS - Force HTTPS for 1 year, include subdomains
+      hsts: {
+        enabled: true,
+        maxAge: 31536000,
+        includeSubDomains: true,
+      },
+      // Prevent clickjacking
+      frameguard: {
+        action: "deny",
       },
     },
   },
