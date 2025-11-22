@@ -1,9 +1,14 @@
+const { validateStripeKeys } = require('./stripe-validation');
+
+// Validate Stripe keys on startup
+validateStripeKeys();
+
 export default ({ env }) => ({
   host: env("HOST", "0.0.0.0"),
   port: env.int("PORT", 1337),
-  // Usa URL solo en producción para despliegue detrás de proxy (Render)
+  // Use URL in production for deployment behind proxy (Railway)
   url: env("NODE_ENV") === "production"
-    ? env("URL", "https://e-commerce-relojes-bv-beni-api.onrender.com")
+    ? env("URL", "https://e-commerce-relojes-bv-beni-api-production.up.railway.app")
     : env("URL", ""),
   proxy: env("NODE_ENV") === "production",
   app: {
