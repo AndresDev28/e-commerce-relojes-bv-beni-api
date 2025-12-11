@@ -71,6 +71,12 @@
       "relation": "manyToMany",
       "target": "api::product.product",
       "inversedBy": "users_permissions_users"
+    },
+    "orders": {
+      "type": "relation",
+      "relation": "oneToMany",
+      "target": "api::order.order",
+      "mappedBy": "user"
     }
   }
 }
