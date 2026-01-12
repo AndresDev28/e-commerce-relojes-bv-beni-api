@@ -1,5 +1,5 @@
 const path = require('path');
-const { parse } = require("pg-connection-string");
+const { parse } = require("pg-connection-string")
 
 module.exports = ({ env }) => {
   // =================================================

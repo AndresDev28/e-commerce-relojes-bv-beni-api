@@ -39,9 +39,11 @@
       "enum": [
         "pending",
         "paid",
+        "processing",
         "shipped",
         "delivered",
-        "cancelled"
+        "cancelled",
+        "refunded"
       ]
     },
     "paymentIntentId": {
@@ -52,6 +54,15 @@
       "relation": "manyToOne",
       "target": "plugin::users-permissions.user",
       "inversedBy": "orders"
+    },
+    "paymentInfo": {
+      "type": "json"
+    },
+    "shippedAt": {
+      "type": "date"
+    },
+    "deliveredAt": {
+      "type": "date"
     }
   }
 }
