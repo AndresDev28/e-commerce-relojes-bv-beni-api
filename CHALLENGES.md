@@ -585,3 +585,551 @@ npm run develop | grep "\[ORD-22\]"
 - **Frontend (Next.js):** `/relojes-bv-beni/src/app/api/send-order-email/route.ts`
 - **Templates:** `/relojes-bv-beni/src/emails/templates/OrderStatusEmail.tsx`
 - **Documentación:** `/relojes-bv-beni/docs/email-system.md`
+---
+
+## Desafío #9: [ORD-25] Configuración de Permisos de Admin en Strapi
+
+**Fecha:** 2026-01-13  
+**Objetivo:** Configurar permisos completos en Strapi para permitir a los administradores gestionar órdenes desde el panel de admin, y a los usuarios autenticados acceder solo a sus propias órdenes vía API.
+
+**Contexto:**  
+A pesar de tener el content type Order creado y funcionando con lifecycle hooks (ORD-22), el sistema tenía una **brecha de seguridad crítica**: no había permisos configurados. Los admins no podían ver órdenes en el panel, y los usuarios autenticados podían acceder a órdenes de otros usuarios.
+
+---
+
+### Obstáculo 1: Order No Visible en Content Manager
+
+**Síntoma:**  
+Al acceder al panel de admin de Strapi (`http://localhost:1337/admin`), el content type "Order" no aparecía en el menú lateral de Content Manager, a pesar de existir el schema.
+
+**Análisis:**  
+```bash
+# Verificación en base de datos SQLite
+sqlite3 .tmp/data.db "SELECT action, subject FROM admin_permissions WHERE subject LIKE '%order%';"
+# Resultado: (vacío)
+```
+
+No había **ningún permiso de admin configurado** para Order. Strapi oculta content types sin permisos configurados.
+
+**Solución:**  
+Configurar permisos de admin panel manualmente via UI:
+
+1. Settings → Administration Panel → Roles
+2. **Super Admin:** Ya tiene acceso completo (no requiere cambios)
+3. **Editor Role:** Configurado con:
+   - ✅ Create (crear órdenes manualmente si es necesario)
+   - ✅ Read (**CRÍTICO** - ver todas las órdenes)
+   - ✅ Update (**CRÍTICO** - cambiar orderStatus)
+   - ✅ Publish (aunque draftAndPublish está en false)
+   - ❌ Delete (las órdenes no se deben borrar)
+4. **Author Role:** Solo lectura
+   - ✅ Read (consultar órdenes)
+   - ❌ Resto de permisos desactivados
+
+**Resultado:**  
+```
+✅ Order aparece en Content Manager
+✅ Admins pueden ver lista de todas las órdenes
+✅ Admins pueden cambiar orderStatus
+✅ Cambiar status dispara emails (ORD-22)
+```
+
+---
+
+### Obstáculo 2: draftAndPublish Bloqueaba Configuración
+
+**Síntoma:**  
+Al intentar configurar permisos del Editor, el checkbox "Publish" no se podía marcar, bloqueando la configuración.
+
+**Análisis:**  
+```json
+// src/api/order/content-types/order/schema.json (línea 10)
+"options": {
+  "draftAndPublish": true  // ❌ No tiene sentido para órdenes
+}
+```
+
+Las órdenes de e-commerce no deberían tener concepto de "borrador" vs "publicado". Se crean automáticamente como finales.
+
+**Solución:**  
+Cambiar a `false` en schema.json:
+
+```json
+"options": {
+  "draftAndPublish": false  // ✅ Órdenes se crean directamente publicadas
+}
+```
+
+**Impacto:**  
+- Órdenes se crean automáticamente como publicadas
+- Simplifica el flujo de órdenes
+- Elimina confusión en permisos de admin
+
+---
+
+### Obstáculo 3: Brecha de Seguridad - Acceso Cross-User
+
+**Síntoma:**  
+Durante testing, un usuario autenticado (`andresprueba@test.com`) pudo acceder a la orden de otro usuario (`andresjpandreiev@gmail.com`) usando:
+
+```
+GET http://localhost:3000/mi-cuenta/pedidos/ORD-1768307332-Z6LH
+```
+
+**Análisis:**  
+El controller de Order usaba el factory por defecto:
+
+```typescript
+// src/api/order/controllers/order.ts (ANTES - INSEGURO)
+export default factories.createCoreController('api::order.order');
+```
+
+Este controller NO filtra automáticamente por usuario autenticado. **Vulnerabilidad crítica de horizontal privilege escalation.**
+
+**Intento de Solución 1: Modificar ctx.query.filters**  
+Intentamos inyectar filtros en `ctx.query`:
+
+```typescript
+ctx.query.filters = {
+  user: { id: { $eq: userId } }
+}
+```
+
+**Error recibido:**
+```
+ValidationError: Invalid key user
+```
+
+Strapi v5 **no permite filtrar por relaciones** directamente en query params REST API.
+
+**Solución Final: Custom Controller con entityService**  
+Reescribimos completamente el controller para usar `entityService` que SÍ soporta filtros de relaciones:
+
+```typescript
+// src/api/order/controllers/order.ts (FINAL - SEGURO)
+export default factories.createCoreController('api::order.order', ({ strapi }) => ({
+  async find(ctx) {
+    const userId = ctx.state.user?.id
+    
+    if (!userId) {
+      return ctx.unauthorized('You must be logged in to view orders')
+    }
+
+    // entityService permite filtrar por relaciones
+    const orders = await strapi.entityService.findMany('api::order.order', {
+      filters: {
+        user: {
+          id: userId,  // ✅ Funciona con entityService
+        },
+      },
+      populate: ctx.query?.populate || '*',
+      sort: ctx.query?.sort || { createdAt: 'desc' },
+      pagination: ctx.query?.pagination || {},
+    })
+
+    strapi.log.info(`[ORD-25] User ${userId} listed their orders (${orders.length} found)`)
+    return { data: orders }
+  },
+
+  async findOne(ctx) {
+    const userId = ctx.state.user?.id
+    
+    if (!userId) {
+      return ctx.unauthorized('You must be logged in to view order details')
+    }
+
+    const { id } = ctx.params
+
+    // Obtener orden y popular relación user
+    const order: any = await strapi.entityService.findOne('api::order.order', id, {
+      populate: ['user'],
+    })
+
+    if (!order) {
+      strapi.log.warn(`[ORD-25] User ${userId} attempted to access non-existent order: ${id}`)
+      return ctx.notFound('Order not found')
+    }
+
+    // Validación de ownership
+    if (order.user?.id !== userId) {
+      strapi.log.warn(
+        `[ORD-25] User ${userId} attempted to access unauthorized order: ${id} ` +
+        `(belongs to user ${order.user?.id})`
+      )
+      return ctx.notFound('Order not found')  // ✅ 404, no 403 (evita info disclosure)
+    }
+
+    strapi.log.info(`[ORD-25] User ${userId} accessed order: ${id}`)
+    return { data: order }
+  },
+}));
+```
+
+**Características de seguridad:**
+
+1. **Filtrado automático por usuario** en `find()`
+2. **Validación de ownership** en `findOne()`
+3. **404 en lugar de 403** cuando orden no pertenece al usuario (evita information disclosure)
+4. **Logging de intentos no autorizados** para auditoría
+5. **Type casting `order: any`** para compatibilidad con TypeScript
+
+---
+
+### Obstáculo 4: Errores de TypeScript con Spread Operators
+
+**Síntoma:**  
+Al intentar compilar el controller customizado:
+
+```
+Los tipos spread solo se pueden crear a partir de tipos de objeto.
+Línea 43: ...existingFilters
+```
+
+**Análisis:**  
+`ctx.query.filters` podía ser `undefined`, y TypeScript no permite spread de valores undefined.
+
+**Iteraciones de solución:**
+
+```typescript
+// INTENTO 1: Spread condicional (❌ Error persiste)
+ctx.query.filters = {
+  ...ctx.query.filters,  // ❌ Aún falla si filters es undefined
+  user: { id: { $eq: userId } }
+}
+
+// INTENTO 2: Fallback a objeto vacío (❌ Error persiste)
+ctx.query.filters = {
+  ...(ctx.query.filters || {}),  // ❌ TypeScript no confía en el fallback
+  user: { id: { $eq: userId } }
+}
+
+// INTENTO 3: Variable intermedia (❌ Error persiste)
+const existingFilters = ctx.query.filters || {}
+ctx.query.filters = {
+  ...existingFilters,  // ❌ TypeScript aún no reconoce el tipo
+  user: { id: { $eq: userId } }
+}
+
+// SOLUCIÓN FINAL: Type casting (✅ Funciona)
+const existingFilters = (ctx.query.filters || {}) as Record<string, any>
+ctx.query.filters = {
+  ...existingFilters,  // ✅ TypeScript acepta el spread
+  user: { id: { $eq: userId } }
+}
+```
+
+**Sin embargo**, esta solución quedó obsoleta cuando cambiamos a usar `entityService` directamente, que no requiere modificar `ctx.query`.
+
+---
+
+### Obstáculo 5: API Permissions No Configurados
+
+**Síntoma:**  
+```bash
+# Testing con usuario autenticado
+GET /api/orders
+# Resultado: 403 Forbidden
+```
+
+Usuarios autenticados no podían crear ni ver órdenes via API.
+
+**Análisis:**  
+```bash
+# Verificación en base de datos
+sqlite3 .tmp/data.db "
+  SELECT p.action, r.name 
+  FROM up_permissions p 
+  JOIN up_permissions_role_lnk pr ON p.id = pr.permission_id 
+  JOIN up_roles r ON pr.role_id = r.id 
+  WHERE p.action LIKE '%order%'
+"
+# Resultado: (vacío)
+```
+
+**ZERO permisos API** configurados para Order.
+
+**Solución:**  
+Configurar permisos via UI:
+
+1. Settings → Users & Permissions Plugin → Roles → Authenticated
+2. Sección "Order" → Marcar:
+   - ✅ **create** (crear órdenes en checkout)
+   - ✅ **find** (listar propias órdenes)
+   - ✅ **findOne** (ver detalles de orden)
+   - ❌ update (usuarios no pueden modificar órdenes)
+   - ❌ delete (usuarios no pueden borrar órdenes)
+
+3. Verificar Public role:
+   - ❌ TODOS los permisos de Order desactivados (seguridad)
+
+**Resultado:**  
+```bash
+# Usuario autenticado
+GET /api/orders
+# 200 OK - Solo sus órdenes
+
+# Usuario sin login
+GET /api/orders
+# 403 Forbidden ✅
+```
+
+---
+
+### Testing Exhaustivo Realizado
+
+#### Test 1: Admin Panel Access ✅
+```
+Pasos:
+1. Login en admin panel (http://localhost:1337/admin)
+2. Content Manager → Order
+3. Ver lista de órdenes
+4. Abrir orden específica
+5. Cambiar orderStatus de "pending" → "paid"
+6. Guardar
+
+Resultado:
+✅ Order visible en Content Manager
+✅ Lista de órdenes completa
+✅ Todos los campos visibles y editables
+✅ orderStatus cambiado exitosamente
+✅ Email enviado (log: [ORD-22] ✅ Email sent successfully)
+```
+
+#### Test 2: API - Create Order ✅
+```
+Pasos:
+1. Login en frontend como usuario de prueba
+2. Agregar producto al carrito
+3. Checkout con tarjeta de prueba (4242 4242 4242 4242)
+
+Resultado:
+✅ Orden creada: ORD-1768307650-I883
+✅ User auto-asignado via lifecycle hook
+✅ Orden visible en "Mis Pedidos"
+```
+
+#### Test 3: API - List Own Orders ✅
+```
+Request:
+GET /api/orders
+Authorization: Bearer {jwt-token-user-1}
+
+Logs Strapi:
+[ORD-25] User 1 listed their orders (9 found)
+
+Resultado:
+✅ Solo 9 órdenes del usuario 1
+✅ No se incluyen órdenes de otros usuarios
+```
+
+#### Test 4: Security - Cross-User Access Blocked ✅
+```
+Setup:
+- Usuario 1 (andresprueba@test.com) - Orden: ORD-1768307650-I883
+- Usuario 4 (andresjpandreiev@gmail.com) - Orden: ORD-1768307332-Z6LH
+
+Test:
+Usuario 1 intenta acceder a orden de Usuario 4:
+GET /api/orders/ORD-1768307332-Z6LH
+Authorization: Bearer {jwt-token-user-1}
+
+Logs Strapi:
+[ORD-25] User 1 attempted to access unauthorized order: xxx (belongs to user 4)
+
+Resultado:
+✅ 404 Not Found (correcto, no 403)
+✅ Frontend muestra "Pedido no encontrado"
+✅ Intento loguead para auditoría
+
+Test positivo:
+GET /api/orders/ORD-1768307650-I883 (propia orden)
+
+Logs Strapi:
+[ORD-25] User 1 accessed order: xxx
+
+Resultado:
+✅ 200 OK
+✅ Detalles de orden visibles
+```
+
+#### Test 5: Security - Public Access Blocked ✅
+```
+Test sin autenticación:
+curl http://localhost:1337/api/orders
+
+Resultado:
+{
+  "data": null,
+  "error": {
+    "status": 403,
+    "name": "ForbiddenError",
+    "message": "Forbidden",
+    "details": {}
+  }
+}
+
+✅ Acceso bloqueado correctamente
+✅ No se exponen datos
+```
+
+---
+
+### Arquitectura de Permisos en Strapi v5
+
+Strapi maneja **dos sistemas de permisos separados:**
+
+#### 1. Admin Permissions (RBAC)
+- **Propósito:** Control de acceso al panel de admin de Strapi
+- **Roles:** Super Admin, Editor, Author
+- **Tabla:** `admin_permissions` + `admin_permissions_role_lnk`
+- **Configuración:** Via UI → Settings → Roles
+- **Formato:** `plugin::content-manager.explorer.{action}`
+- **Acciones:** create, read, update, delete, publish
+
+#### 2. API Permissions (users-permissions plugin)
+- **Propósito:** Control de acceso API para usuarios del frontend
+- **Roles:** Public, Authenticated
+- **Tabla:** `up_permissions` + `up_permissions_role_lnk`
+- **Configuración:** Via UI → Settings → Users & Permissions Plugin
+- **Formato:** `api::{content-type}.{action}`
+- **Acciones:** find, findOne, create, update, delete
+
+**Limitación Crítica en Strapi v5:**  
+⚠️ Los permisos **NO se pueden configurar via código**. Deben configurarse manualmente en la UI. Esto dificulta version control y despliegues automatizados.
+
+---
+
+### Configuración Final de Permisos
+
+#### Admin Permissions (Admin Panel)
+
+| Rol | Create | Read | Update | Delete | Publish |
+|-----|--------|------|--------|--------|---------|
+| Super Admin | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Editor | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Author | ❌ | ✅ | ❌ | ❌ | ❌ |
+
+#### API Permissions (Frontend Users)
+
+| Rol | find | findOne | create | update | delete |
+|-----|------|---------|--------|--------|--------|
+| Authenticated | ✅ | ✅ | ✅ | ❌ | ❌ |
+| Public | ❌ | ❌ | ❌ | ❌ | ❌ |
+
+**Nota:** Aunque Authenticated tiene permisos de find/findOne, el **controller customizado** garantiza que solo vean sus propias órdenes.
+
+---
+
+### Lecciones Aprendidas
+
+1. **Strapi v5 Query API Limitaciones:**
+   - REST API query params NO soportan filtros por relaciones
+   - Usar `entityService` para queries complejas con relaciones
+   - `ctx.query.filters.user` → ❌ ValidationError
+   - `entityService.findMany({ filters: { user: {...} } })` → ✅
+
+2. **Defense in Depth:**
+   - Permisos de API + Controller customizado = Doble capa de seguridad
+   - Nunca confiar solo en permisos de Strapi
+   - Validación manual de ownership crítica
+
+3. **Information Disclosure Prevention:**
+   - Devolver 404 (no 403) cuando orden no pertenece al usuario
+   - 403 revela que el recurso existe → brecha de seguridad
+   - 404 no revela información
+
+4. **Auditing:**
+   - Log TODOS los intentos de acceso no autorizado
+   - Formato: `[ORD-25] User ${userId} attempted to access...`
+   - Crítico para detectar ataques
+
+5. **TypeScript en Controllers:**
+   - `order: any` es pragmático cuando tipos dinámicos son complejos
+   - Type casting necesario con entityService populate
+   - Balance entre type safety y productividad
+
+6. **draftAndPublish Consideration:**
+   - No todos los content types necesitan draft/publish
+   - E-commerce orders = crear directamente como final
+   - Simplifica permisos y flujo
+
+---
+
+### Estadísticas de Implementación
+
+- **Permisos configurados:** 15+ (admin + API)
+- **Roles configurados:** 5 (3 admin + 2 API)
+- **Tests ejecutados:** 5
+- **Tests pasados:** 5 (100%)
+- **Bugs de seguridad encontrados:** 1 (acceso cross-user)
+- **Bugs corregidos:** 1 (100%)
+- **Código añadido/modificado:**
+  - `src/api/order/controllers/order.ts`: 89 líneas (reescrito completo)
+  - `src/api/order/content-types/order/schema.json`: 1 línea (draftAndPublish)
+
+---
+
+### Resultado Final
+
+✅ **Admin Panel Funcional:**
+- Admins pueden ver todas las órdenes
+- Editors pueden cambiar orderStatus
+- Authors tienen acceso read-only
+- Cambios de status disparan emails (ORD-22)
+
+✅ **API Segura:**
+- Usuarios autenticados pueden crear y ver solo sus órdenes
+- Validación de ownership en controller
+- Acceso público bloqueado (403)
+
+✅ **Seguridad Implementada:**
+- Filtrado automático por usuario
+- Validación manual de ownership
+- Logging de intentos no autorizados
+- Defense in depth (permisos + controller)
+
+✅ **No Information Disclosure:**
+- 404 para órdenes no autorizadas (no 403)
+- Mensajes de error genéricos
+
+---
+
+### Comandos Útiles
+
+```bash
+# Verificar permisos en base de datos (Admin)
+sqlite3 .tmp/data.db "
+  SELECT action, subject 
+  FROM admin_permissions 
+  WHERE subject LIKE '%order%'
+"
+
+# Verificar permisos en base de datos (API)
+sqlite3 .tmp/data.db "
+  SELECT p.action, r.name 
+  FROM up_permissions p 
+  JOIN up_permissions_role_lnk pr ON p.id = pr.permission_id 
+  JOIN up_roles r ON pr.role_id = r.id 
+  WHERE p.action LIKE '%order%'
+"
+
+# Test de acceso público bloqueado
+curl http://localhost:1337/api/orders
+
+# Test de acceso autenticado
+curl -H "Authorization: Bearer {jwt-token}" \
+  http://localhost:1337/api/orders
+
+# Ver logs filtrados por ORD-25
+npm run develop | grep "\[ORD-25\]"
+```
+
+---
+
+### Referencias
+
+- **Controller:** `/src/api/order/controllers/order.ts`
+- **Schema:** `/src/api/order/content-types/order/schema.json`
+- **Plan de implementación:** `/docs/ORD-25-implementation-plan.md`
+- **Frontend ownership validation:** `/relojes-bv-beni/src/app/api/orders/[orderId]/route.ts`
+
