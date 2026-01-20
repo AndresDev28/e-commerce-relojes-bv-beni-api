@@ -14,15 +14,19 @@ export default {
     const ctx = strapi.requestContext.get();
 
     if (ctx?.state?.user?.id) {
-      // Assign the authenticated user's ID to the order
+      // Assign the authenticated user's ID to the order (from HTTP request)
       // In Strapi v5, relations are set using the "connect" syntax
       data.user = {
         connect: [ctx.state.user.id]
       };
 
       strapi.log.info(`Order lifecycle: Assigning user ${ctx.state.user.id} to new order`)
+    } else if (data.user) {
+      // User already provided in payload (e.g., from programmatic creation in tests)
+      // Keep the existing user assignment
+      strapi.log.info('Order lifecycle: User already assigned in payload (programmatic creation)')
     } else {
-      strapi.log.warn('Order lifecycle: No authenticated user found in request context')
+      strapi.log.warn('Order lifecycle: No authenticated user found in request context or payload')
     }
   },
   /**

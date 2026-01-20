@@ -1,0 +1,114 @@
+// ======== IMPORTACIONES Y TIPOS ========
+import type { Core } from "@strapi/strapi"
+
+// ======== CONFIGURACIÓN DE ENTORNO ========
+const TEST_ENV_VARS = {
+  NODE_ENV: 'test',
+  APP_KEYS: 'testKey1,testKey2,testKey3,testKey4',
+  JWT_SECRET: 'test-jwt-secret',
+  API_TOKEN_SALT: 'test-api-token-salt',
+  ADMIN_JWT_SECRET: 'test-admin-jwt-secret',
+  TRANSFER_TOKEN_SALT: 'test-transfer-token-salt',
+  DATABASE_CLIENT: 'sqlite',
+  DATABASE_FILENAME: ':memory:',
+  STRAPI_DISABLE_CRON: 'true',
+  DISABLE_EMAIL_NOTIFICATIONS: 'true',
+  HOST: '127.0.0.1',
+  PORT: '1338', // Puerto diferente para testing
+}
+
+// ======== STRAPI INSTANCE MANAGEMENT ========
+let strapiInstance: Core.Strapi | null = null
+export async function setupStrapi() {
+  // 1. Setear variables de entorno para testing
+  // 2. Crear instancia Strapi con configuración específica
+  // 3. Inicializar base de datos SQLite en memoria
+  // 4. Esperar que Strapi esté completamente inicializado
+  // 5. Guardar instancia en global scope
+  // 6. Verificar conexión y permisos básicos
+}
+
+export async function cleanupStrapi() {
+  // 1. Destruir instancia Strapi si existe
+  // 2. Limpiar variables de entorno
+  // 3. Resetear global scope
+}
+
+export function getStrapi(): Core.Strapi {
+  if (!strapiInstance) {
+    throw new Error('Strapi not initialized. Call setupStrapi() first.')
+  }
+  return strapiInstance
+}
+
+// ======== USER MANAGEMENT ========
+export async function createTestUser(userData: {
+  username: string
+  email: string
+  password: string
+  role?: 'authenticated'
+}) {
+  // 1. Crear usuario con users-permissions service
+  // 2. Asignar rol por defecto (authenticated)
+  // 3. Confirmar usuario automáticamente
+  // 4. Retornar usuario creado
+}
+
+export async function authenticateUser(identifier: string, password: string) {
+  // 1. Llamar a strapi.plugin('users-permissions').service('auth').authenticate
+  // 2. Generar JWT token
+  // 3. Retornar { user, jwt }
+}
+export function getAuthHeaders(jwt: string) {
+  return { 
+    Authorization: `Bearer ${jwt}`,
+    'Content-Type': 'application/json'
+  }
+}
+
+// ======== TEST DATA FACTORIES ========
+export async function createTestCategory(data?: {
+  name?: string
+  slug?: string
+  description?: string
+}) {
+  // 1. Crear categoría via entityService
+  // 2. Retornar categoría creada
+}
+export async function createTestProduct(data?: {
+  name?: string
+  price?: number
+  description?: string
+  stock?: number
+  categoryId?: number
+}) {
+  // 1. Verificar/crear categoría si no se proporciona
+  // 2. Crear producto con datos de prueba
+  // 3. Retornar producto creado
+}
+export async function createTestOrder(data?: {
+  items?: any[]
+  subtotal?: number
+  shipping?: number
+  total?: number
+  orderStatus?: string
+}, userId?: number) {
+  // 1. Validar que userId existe
+  // 2. Crear orden con entityService
+  // 3. Auto-asignar usuario (simulando lifecycle hook)
+  // 4. Retornar orden creada
+}
+
+// ======== CLEANUP UTILITIES ========
+export async function cleanupUsers() {
+  // 1. Eliminar todos los usuarios creados en tests
+  // 2. Mantener solo roles del sistema
+}
+export async function cleanupContent() {
+  // 1. Eliminar productos, categorías, órdenes de prueba
+  // 2. Limpiar archivos subidos si existen
+}
+export async function resetDatabase() {
+  // 1. Ejecutar cleanup completo
+  // 2. Recrear estructura básica necesaria
+}
