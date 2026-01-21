@@ -38,14 +38,21 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
           id: userId,
         },
       },
-      populate: ctx.query?.populate || '*',
+      populate: ctx.query?.populate || 'user',
       sort: ctx.query?.sort || { createdAt: 'desc' },
       pagination: ctx.query?.pagination || {},
     })
 
     strapi.log.info(`[ORD-25] User ${userId} listed their orders (${orders.length} found)`)
 
-    return { data: orders }
+    // Return with standard Strapi v5 REST API format
+    return {
+      data: orders.map(order => ({
+        id: order.documentId,
+        attributes: order
+      })),
+      meta: {}
+    }
   },
 
   /**
@@ -64,10 +71,17 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
 
     const { id } = ctx.params
 
-    // Use entityService to find order and populate user relation
-    const order: any = await strapi.entityService.findOne('api::order.order', id, {
-      populate: ['user'],
-    })
+    // In Strapi v5, use Document Service API to work with documentId
+    let order: any
+    try {
+      order = await strapi.documents('api::order.order').findOne({
+        documentId: id,
+        populate: ['user'],
+      })
+    } catch (error) {
+      strapi.log.warn(`[ORD-25] Error finding order ${id}:`, error)
+      return ctx.notFound('Order not found')
+    }
 
     // Check if order exists
     if (!order) {
@@ -83,6 +97,13 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
 
     strapi.log.info(`[ORD-25] User ${userId} accessed order: ${id}`)
 
-    return { data: order }
+    // Return with standard Strapi v5 REST API format
+    return {
+      data: {
+        id: order.documentId,
+        attributes: order
+      },
+      meta: {}
+    }
   },
 }));

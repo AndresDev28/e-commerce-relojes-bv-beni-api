@@ -13,7 +13,8 @@
     "noEmitOnError": true,
     "noImplicitThis": true,
     "outDir": "dist",
-    "rootDir": "."
+    "rootDir": ".",
+    "types": ["vitest/globals", "node"]
   },
   "include": [
     // Include root files
@@ -35,8 +36,6 @@
 
     // Do not include admin files in the server compilation
     "src/admin/",
-    // Do not include test files
-    "**/*.test.*",
     // Do not include plugins in the server compilation
     "src/plugins/**"
   ]
