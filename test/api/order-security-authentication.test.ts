@@ -1,4 +1,7 @@
 // test/api/order-security-authentication.test.ts
+// [ORD-09] Crear endpoint GET /api/orders/:orderId (seguridad)
+// [ORD-16] Tests: No se puede acceder a pedidos de otros usuarios (authentication)
+//
 // Tests críticos de seguridad: Authentication (JWT Required)
 
 import { describe, it, expect, beforeEach } from 'vitest'

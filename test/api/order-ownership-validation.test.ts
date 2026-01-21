@@ -1,4 +1,7 @@
-// test/api/order-security-authorization.test.ts
+// test/api/order-ownership-validation.test.ts
+// [ORD-10] Implementar validación de propiedad del pedido
+// [ORD-16] Tests: No se puede acceder a pedidos de otros usuarios
+//
 // Tests críticos de seguridad: Cross-User Access Prevention (Horizontal Privilege Escalation)
 
 import { describe, it, expect, beforeEach } from 'vitest'

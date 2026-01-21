@@ -1,4 +1,7 @@
 // test/api/order-security-lifecycle.test.ts
+// [PAY-18] Crear orden en Strapi después de pago exitoso (lifecycle hooks)
+// [ORD-10] Implementar validación de propiedad del pedido (auto-assignment)
+//
 // Tests críticos de seguridad: Lifecycle Hooks (beforeCreate auto-assignment)
 
 import { describe, it, expect, beforeEach } from 'vitest'
