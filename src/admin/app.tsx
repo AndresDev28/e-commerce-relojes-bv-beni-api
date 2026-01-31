@@ -1,5 +1,6 @@
 // [ORD-26] Configuración del Admin Panel para gestión de Orders
 import type { StrapiApp } from '@strapi/strapi/admin';
+import OrderStatusFilters from './extensions/components/OrderStatusFilters';
 
 export default {
   config: {
@@ -13,7 +14,11 @@ export default {
       },
     },
   },
-  bootstrap(_app: StrapiApp) {
-    // Bootstrap hook - puede usarse para extensiones futuras del admin
-  },
+  bootstrap(app: StrapiApp) {                                                                                                                
+    // [ORD-27] Inyectar componente de filtros rápidos en Orders                                                                             
+    app.getPlugin('content-manager').injectComponent('listView', 'actions', {                                                                
+      name: 'OrderStatusFilters',                                                                                                            
+      Component: OrderStatusFilters, // Componente directo, no unlazy import                                                   
+    });                                                                                                                                      
+  }, 
 };
