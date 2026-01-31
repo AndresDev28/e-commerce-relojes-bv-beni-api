@@ -44,7 +44,7 @@ const OrderStatusFilters: React.FC = () => {
     const pathname = window.location.pathname
     // La URL en Strapi admin es: /admin/content-manager/collection-types/{api::order.order}
     return pathname.includes('/collection-types/') &&
-           (pathname.includes('api::order.order') || pathname.includes('order'))
+          (pathname.includes('api::order.order') || pathname.includes('order'))
   }, [])
 
   // Si no estamos en Orders, no renderizar nada
