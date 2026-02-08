@@ -12,10 +12,8 @@ This is a **Strapi 5** headless CMS backend for an e-commerce watch store (Reloj
 # Development (with auto-reload)
 npm run dev
 
-# Production build
+# Production
 npm run build
-
-# Start production server
 npm run start
 
 # Strapi console (REPL with strapi object)
@@ -24,6 +22,13 @@ npm run console
 # Upgrade Strapi version
 npm run upgrade
 npm run upgrade:dry  # dry-run first
+
+# Testing (Vitest)
+npm run test              # Build and run tests
+npm run test:watch        # Build and run tests in watch mode
+npm run test:ui           # Build and run tests with UI
+npm run test:coverage     # Build and run tests with coverage
+npm run test:only         # Run tests without build step
 ```
 
 ## Architecture
@@ -43,13 +48,15 @@ The User content type is extended with:
 ### Key Custom Implementations
 
 **Order Lifecycle Hooks** (`src/api/order/content-types/order/lifecycles.ts`):
-- `beforeCreate`: Auto-assigns authenticated user to new orders (solves Strapi v5 relation assignment issue)
-- `beforeUpdate`: Stores previous orderStatus for change detection
+- `beforeCreate`: Auto-assigns authenticated user to new orders using Strapi v5 connect syntax
+- `beforeUpdate`: Stores previous orderStatus for change detection (ORD-22)
 - `afterUpdate`: Triggers email notifications via webhook to frontend when order status changes
+- Email notifications controlled by `DISABLE_EMAIL_NOTIFICATIONS` environment variable
 
 **Order Controller** (`src/api/order/controllers/order.ts`):
-- Security: Overrides find/findOne to ensure users can only access their own orders
-- Prevents horizontal privilege escalation
+- Security: Overrides `find()` to filter orders by authenticated user (prevents horizontal privilege escalation)
+- Uses Document Service API for `findOne()` with user validation
+- Implements strict access control with detailed logging
 
 **Product Controller** (`src/api/product/controllers/product.ts`):
 - Normalizes frontend queries (`images` → `image`)
@@ -59,7 +66,12 @@ The User content type is extended with:
 
 **HTTPS Enforcer** (`src/middlewares/https-enforcer.ts`):
 - Blocks HTTP requests to sensitive routes in production (`/api/orders`, `/api/payments`, `/api/stripe`)
+- Uses `X-Forwarded-Proto` header for Railway/Render proxy compatibility
 - Configured in `config/middlewares.ts`
+
+**Security Headers** (`config/middlewares.ts`):
+- CORS configured for specific frontend domains
+- CSP, HSTS, and frameguard headers enabled
 
 ### Database Configuration
 
@@ -71,14 +83,35 @@ The User content type is extended with:
 - **Development**: Local storage
 - **Production**: Cloudinary (configured via `CLOUDINARY_NAME`, `CLOUDINARY_KEY`, `CLOUDINARY_SECRET`)
 
+## Testing
+
+Test framework: **Vitest** with SQLite in-memory database.
+
+Test helpers (`tests/helpers/`):
+- Strapi instance management with setup/cleanup
+- Test user creation and authentication
+- Content factories (Category, Product, Order)
+- Permission setup for testing
+- Database reset utilities
+
+Run tests with `npm run test` or `npm run test:watch` for development.
+
 ## Environment Variables
 
 Required for full functionality:
 - `DATABASE_URL` (production) or `DATABASE_HOST`, `DATABASE_NAME`, `DATABASE_PASSWORD` (dev)
 - `JWT_SECRET`, `APP_KEYS`, `API_TOKEN_SALT`, `ADMIN_JWT_SECRET`
-- `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`
+- `STRIPE_SECRET_KEY`, `STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`
 - `CLOUDINARY_NAME`, `CLOUDINARY_KEY`, `CLOUDINARY_SECRET` (production)
 - `FRONTEND_URL`, `WEBHOOK_SECRET` (for email notifications)
+- `DISABLE_EMAIL_NOTIFICATIONS` (optional, set to `true` to disable email webhooks)
+
+## Stripe Integration
+
+**Key Validation** (`config/stripe-validation.ts`):
+- Prevents test keys in production
+- Prevents live keys in development
+- Validates key consistency at startup
 
 ## Strapi v5 Patterns
 
@@ -88,3 +121,11 @@ data.user = { connect: [userId] };
 ```
 
 Content type API identifiers follow the pattern: `api::content-type.content-type`
+
+For `findOne()` in controllers, use the Document Service API:
+```typescript
+const entity = await strapi.documents('api::order.order').findOne({
+  documentId: id,
+  populate: deepPopulate,
+});
+```
