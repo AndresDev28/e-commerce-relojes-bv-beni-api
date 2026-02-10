@@ -106,4 +106,57 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
       meta: {}
     }
   },
+
+  /**
+   * GET /api/orders/search
+   *
+   * [AND-62] Search orders by email and/or orderId.
+   * This endpoint is designed for the admin panel and does NOT filter by authenticated user.
+   *
+   * Query params:
+   * - email: Search by customer email (case-insensitive partial match)
+   * - orderId: Search by order number (partial match)
+   *
+   * Both params can be combined to narrow results.
+   */
+  async search(ctx) {
+    const { email, orderId } = ctx.request.query
+    const filters: any = {}
+
+    // If email is provided, first find matching users
+    if (email) {
+      const users = await strapi.entityService.findMany(
+        'plugin::users-permissions.user',
+        {
+          filters: { email: { $containsi: email } },
+          fields: ['id', 'email', 'username'],
+        }
+      )
+
+      const userIds = users.map((u: any) => u.id)
+
+      if (userIds.length > 0) {
+        filters.user = { $in: userIds }
+      } else {
+        // No users found, return empty result
+        return { data: [], meta: { pagination: { total: 0 } } }
+      }
+    }
+
+    // If orderId is provided, add to filters
+    if (orderId) {
+      filters.orderId = { $contains: orderId }
+    }
+
+    const entity = await strapi.entityService.findMany('api::order.order', {
+      filters,
+      populate: { user: true },
+      sort: { createdAt: 'desc' },
+    })
+
+    return {
+      data: entity,
+      meta: { pagination: { total: entity.length } }
+    }
+  },
 }));

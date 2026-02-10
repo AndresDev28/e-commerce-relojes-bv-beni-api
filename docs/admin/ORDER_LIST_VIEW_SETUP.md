@@ -82,6 +82,42 @@ Para facilitar la gestión de pedidos, configura los siguientes filtros:
 - **createdAt**: Permite filtrar por rango de fechas
 - **user**: Permite buscar por cliente
 
+## Búsqueda de Pedidos
+
+[AND-62] El panel de administración cuenta con dos tipos de búsqueda:
+
+### 1. Por Número de Pedido
+- Usa el campo `orderId` para búsqueda exacta o parcial
+- Ejemplo: "ORD-123" encontrará todos los pedidos que contengan esa secuencia
+
+### 2. Por Email de Cliente
+- Busca pedidos asociados a un email de usuario
+- Usa un endpoint personalizado `/api/orders/search` que hace join con la tabla de usuarios
+- La búsqueda es case-insensitive y permite coincidencias parciales
+- Ejemplo: "test@example.com" encontrará todos los pedidos del usuario con ese email
+
+### Componente OrderSearch
+Ubicación: `src/admin/extensions/components/OrderSearch/index.tsx`
+
+El componente incluye un selector para elegir el tipo de búsqueda:
+- **Nº pedido**: Búsqueda nativa usando queryParams de Strapi
+- **Email**: Búsqueda via fetch al endpoint personalizado
+
+### Implementación Técnica
+
+**Endpoint personalizado** (`src/api/order/routes/order.ts`):
+```typescript
+{
+  method: 'GET',
+  path: '/search',
+  handler: 'order.search'
+}
+```
+
+**Controller** (`src/api/order/controllers/order.ts`):
+El método `search()` busca usuarios por email primero, luego filtra los pedidos
+por los user IDs encontrados.
+
 ## Ordenamiento Por Defecto
 
 Se recomienda ordenar por `createdAt` descendente para mostrar los pedidos más recientes primero.
