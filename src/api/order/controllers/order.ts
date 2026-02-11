@@ -124,7 +124,7 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
     const filters: any = {}
 
     // If email is provided, first find matching users
-    if (email) {
+    if (typeof email === 'string' && email) {
       const users = await strapi.entityService.findMany(
         'plugin::users-permissions.user',
         {
@@ -144,7 +144,7 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
     }
 
     // If orderId is provided, add to filters
-    if (orderId) {
+    if (typeof orderId === 'string' && orderId) {
       filters.orderId = { $contains: orderId }
     }
 

@@ -1133,3 +1133,55 @@ npm run develop | grep "\[ORD-25\]"
 - **Plan de implementación:** `/docs/ORD-25-implementation-plan.md`
 - **Frontend ownership validation:** `/relojes-bv-beni/src/app/api/orders/[orderId]/route.ts`
 
+
+---
+
+## Desafío #10: Búsqueda de Órdenes por Email en Admin Panel
+
+**Fecha:** 2026-02-11
+**Objetivo:** Permitir buscar órdenes por email del cliente en el componente de búsqueda personalizado del panel de administración.
+
+### Obstáculo: Búsqueda sin Resultados para Emails Válidos
+
+**Síntoma:**
+Al ingresar un email de cliente válido en el buscador de órdenes, la consola mostraba "No users found" y no se devolvía ninguna orden, a pesar de que existían órdenes asociadas a ese email.
+
+**Análisis:**
+El componente  estaba consultando el endpoint incorrecto para buscar usuarios:
+
+```typescript
+// Código Original (Incorrecto)
+const usersResponse = await fetchClient.get(
+  `/admin/users?pageSize=100&page=1`
+)
+```
+
+El endpoint `/admin/users` devuelve **administradores** del panel de Strapi, no los **clientes** (usuarios del plugin `users-permissions`) que realizan las compras. Como los emails de los clientes no existen en la tabla de administradores, la búsqueda siempre fallaba.
+
+**Solución:**
+Se modificó el componente  para consultar el endpoint del Content Manager correspondiente a los usuarios del plugin `users-permissions`.
+
+1.  **Cambio de Endpoint:** De `/admin/users` a `/content-manager/collection-types/plugin::users-permissions.user`.
+2.  **Filtrado Nativo:** Se utilizaron los filtros de Strapi (`filters[email][]`) en lugar de filtrar el array en el cliente, mejorando la eficiencia.
+3.  **Manejo de IDs:** Se añadió compatibilidad para `documentId` (Strapi v5) e `id` (Strapi v4).
+
+```typescript
+// Código Corregido
+const { data: userData } = await fetchClient.get(
+  `/content-manager/collection-types/plugin::users-permissions.user`,
+  {
+    params: {
+      page: 1,
+      pageSize: 10,
+      filters: {
+        email: {
+          : trimmedValue,
+        },
+      },
+    },
+  }
+)
+```
+
+**Resultado Final:**
+La búsqueda por email ahora localiza correctamente a los clientes y filtra sus órdenes asociadas en el listado.

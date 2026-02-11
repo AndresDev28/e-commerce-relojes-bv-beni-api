@@ -1,6 +1,6 @@
 import React from 'react'
 import { TextInput, SingleSelect, SingleSelectOption } from '@strapi/design-system'
-import { useQueryParams } from '@strapi/admin/strapi-admin'
+import { useQueryParams, useFetchClient } from '@strapi/admin/strapi-admin'
 import { Search, Cross } from '@strapi/icons'
 
 type SearchType = 'orderId' | 'email'
@@ -12,13 +12,14 @@ type SearchType = 'orderId' | 'email'
  * - Número de pedido (orderId)
  * - Email de cliente
  *
- * La búsqueda por email usa un endpoint personalizado /api/orders/search
- * que hace join con la tabla de usuarios.
+ * La búsqueda por email usa el Content Manager API para buscar clientes
+ * (plugin::users-permissions.user) y luego filtra las órdenes por el usuario.
  *
  * NOTA: La verificación de colección se hace en el componente padre OrderFiltersPanel.
  */
 const OrderSearch: React.FC = () => {
   const [{ query }, setQuery] = useQueryParams()
+  const fetchClient = useFetchClient() // Cliente con autenticación automática
   const [searchType, setSearchType] = React.useState<SearchType>('orderId')
   const [searchValue, setSearchValue] = React.useState('')
   const [isLoading, setIsLoading] = React.useState(false)
@@ -33,48 +34,54 @@ const OrderSearch: React.FC = () => {
     const trimmedValue = searchValue.trim()
 
     if (searchType === 'email') {
-      // Búsqueda por email usando endpoint personalizado
+      // Búsqueda por email: buscar usuarios primero, luego filtrar orders
+      // Búsqueda por email: buscar usuarios primero, luego filtrar orders
       setIsLoading(true)
       try {
-        const token = localStorage.getItem('jwtToken') || ''
-        const response = await fetch(
-          `/api/orders/search?email=${encodeURIComponent(trimmedValue)}`,
+
+        // Usar el endpoint correcto para buscar clientes (users-permissions)
+        // en lugar de administradores (/admin/users)
+        const { data: userData } = await fetchClient.get(
+          `/content-manager/collection-types/plugin::users-permissions.user`,
           {
-            headers: {
-              Authorization: `Bearer ${token}`,
-              'Content-Type': 'application/json',
+            params: {
+              page: 1,
+              pageSize: 10,
+              filters: {
+                email: {
+                  $containsi: trimmedValue,
+                },
+              },
             },
           }
         )
 
-        if (!response.ok) {
-          throw new Error('Search failed')
-        }
+        // En Content Manager v4/v5, la respuesta suele tener { results: [...] } o { data: [...] }
+        // Verificamos ambas estructuras por compatibilidad
+        const users = userData?.results || userData?.data || []
 
-        const data = await response.json()
-
-        // Actualizar la lista con los resultados
-        // Usamos los IDs de los pedidos encontrados para filtrar
-        const orderIds = data.data?.map((order: any) => order.orderId) || []
-
-        if (orderIds.length === 0) {
-          // Si no hay resultados, aplicar un filtro que no devuelve nada
+        if (users.length === 0) {
           setQuery({
             filters: {
-              orderId: 'NONEXISTENT-ORDER-ID',
+              user: {
+                documentId: 'NONEXISTENT-USER-ID' // Forzar sin resultados
+              }
             },
           })
         } else {
-          // Filtrar por los IDs encontrados
+          // Obtener los documentIds de los usuarios encontrados
+          const userDocumentIds = users.map((u: any) => u.documentId || u.id)
+
           setQuery({
             filters: {
-              orderId: { $in: orderIds },
+              user: {
+                documentId: { $in: userDocumentIds },
+              },
             },
           })
         }
       } catch (error) {
-        console.error('Error searching by email:', error)
-        // En caso de error, no hacer nada
+        console.error('[OrderSearch] Error:', error)
       } finally {
         setIsLoading(false)
       }
@@ -102,18 +109,19 @@ const OrderSearch: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-      <SingleSelect
-        value={searchType}
-        onChange={(value: SearchType) => {
-          setSearchType(value)
-          setSearchValue('')
-          setQuery({ filters: {} })
-        }}
-        style={{ minWidth: '120px' }}
-      >
-        <SingleSelectOption value="orderId">Nº pedido</SingleSelectOption>
-        <SingleSelectOption value="email">Email</SingleSelectOption>
-      </SingleSelect>
+      <div style={{ minWidth: '120px' }}>
+        <SingleSelect
+          value={searchType}
+          onChange={(value) => {
+            setSearchType(value as SearchType)
+            setSearchValue('')
+            setQuery({ filters: {} })
+          }}
+        >
+          <SingleSelectOption value="orderId">Nº pedido</SingleSelectOption>
+          <SingleSelectOption value="email">Email</SingleSelectOption>
+        </SingleSelect>
+      </div>
       <TextInput
         placeholder={searchType === 'orderId' ? 'Buscar nº pedido...' : 'Buscar email...'}
         value={searchValue}
@@ -122,22 +130,27 @@ const OrderSearch: React.FC = () => {
           if (e.key === 'Enter') {
             handleSearch()
           }
-          if (e.key === 'Escape') {
-            e.preventDefault()
-            e.stopPropagation()
-            handleClear()
-          }
         }}
         startAction={<Search width="16px" height="16px" />}
-        endAction={searchValue && (
-          <button
-            onClick={handleClear}
-            style={{ background: 'none', border: 'none', cursor: 'pointer' }}
-            aria-label="Clear search"
-          >
-            <Cross width="16px" height="16px" />
-          </button>
-        )}
+        endAction={
+          searchValue ? (
+            <button
+              onClick={handleClear}
+              style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+              aria-label="Clear search"
+            >
+              <Cross width="16px" height="16px" />
+            </button>
+          ) : (
+            <button
+              onClick={handleSearch}
+              style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+              aria-label="Search"
+            >
+              <Search width="16px" height="16px" />
+            </button>
+          )
+        }
         disabled={isLoading}
         style={{ minWidth: '200px' }}
       />
