@@ -97,7 +97,6 @@ async function setupTestPermissions(strapi: Core.Strapi) {
   try {
     console.log('🔒 Configuring test permissions...')
 
-    // Get the authenticated role
     const authenticatedRole = await strapi.query('plugin::users-permissions.role').findOne({
       where: { type: 'authenticated' }
     })
@@ -107,14 +106,12 @@ async function setupTestPermissions(strapi: Core.Strapi) {
       return
     }
 
-    // Define permissions for Order content type
     const orderPermissions = [
       'api::order.order.find',
       'api::order.order.findOne',
       'api::order.order.create',
     ]
 
-    // Check and create permissions
     for (const action of orderPermissions) {
       const existingPermission = await strapi.query('plugin::users-permissions.permission').findOne({
         where: {
@@ -124,7 +121,6 @@ async function setupTestPermissions(strapi: Core.Strapi) {
       })
 
       if (existingPermission) {
-        // Update to enabled if not already
         if (!existingPermission.enabled) {
           await strapi.query('plugin::users-permissions.permission').update({
             where: { id: existingPermission.id },
@@ -132,7 +128,6 @@ async function setupTestPermissions(strapi: Core.Strapi) {
           })
         }
       } else {
-        // Create new permission
         await strapi.query('plugin::users-permissions.permission').create({
           data: {
             action,
@@ -180,7 +175,11 @@ export async function setupStrapi() {
       // 6. Configurar permisos para testing [ORD-26]
       await setupTestPermissions(strapi)
 
-      // 7. Debug: Verificar que el controller y las rutas están registrados
+      // 7. Setup administrator role [ORD-30]
+      await setupAdministratorRole()
+      await assignOrderPermissionsToAdmin()
+
+      // 8. Debug: Verificar que el controller y las rutas están registrados
       try {
         const orderController = strapi.controller('api::order.order')
         console.log('🔍 Order controller loaded:', !!orderController)
@@ -350,6 +349,135 @@ export function getAuthHeaders(jwt: string) {
   return {
     Authorization: `Bearer ${jwt}`,
     'Content-Type': 'application/json'
+  }
+}
+
+// ======== ADMINISTRATOR ROLE MANAGEMENT ========
+export async function setupAdministratorRole() {
+  const strapi = getStrapi()
+
+  try {
+    console.log('👑 Setting up administrator role...')
+
+    const existingRole = await strapi.query('plugin::users-permissions.role').findOne({
+      where: { type: 'administrator' }
+    })
+
+    if (existingRole) {
+      console.log('👑 Administrator role already exists')
+      return existingRole
+    }
+
+    const adminRole = await strapi.query('plugin::users-permissions.role').create({
+      data: {
+        name: 'Administrator',
+        description: 'Full administrative access to all resources',
+        type: 'administrator',
+      },
+    })
+
+    console.log('👑 Administrator role created')
+    return adminRole
+  } catch (error) {
+    throw new Error(`Failed to setup administrator role: ${error.message}`)
+  }
+}
+
+export async function assignOrderPermissionsToAdmin() {
+  const strapi = getStrapi()
+
+  try {
+    console.log('🔑 Assigning Order API permissions to administrator role...')
+
+    const adminRole = await strapi.query('plugin::users-permissions.role').findOne({
+      where: { type: 'administrator' }
+    })
+
+    if (!adminRole) {
+      throw new Error('Administrator role not found. Call setupAdministratorRole() first.')
+    }
+
+    const orderPermissions = [
+      'api::order.order.find',
+      'api::order.order.findOne',
+      'api::order.order.create',
+      'api::order.order.update',
+      'api::order.order.delete',
+      'api::order.order.search',
+    ]
+
+    for (const action of orderPermissions) {
+      const existingPermission = await strapi.query('plugin::users-permissions.permission').findOne({
+        where: {
+          action,
+          role: adminRole.id
+        }
+      })
+
+      if (existingPermission) {
+        if (!existingPermission.enabled) {
+          await strapi.query('plugin::users-permissions.permission').update({
+            where: { id: existingPermission.id },
+            data: { enabled: true }
+          })
+        }
+      } else {
+        await strapi.query('plugin::users-permissions.permission').create({
+          data: {
+            action,
+            role: adminRole.id,
+            enabled: true
+          }
+        })
+      }
+    }
+
+    console.log('✅ Order API permissions assigned to administrator role')
+  } catch (error) {
+    throw new Error(`Failed to assign permissions to administrator role: ${error.message}`)
+  }
+}
+
+export async function createTestUserWithRole(userData: {
+  username: string
+  email: string
+  password: string
+}, roleId: number | string) {
+  const strapi = getStrapi()
+
+  try {
+    const user = await strapi.plugin('users-permissions').service('user').add({
+      username: userData.username,
+      email: userData.email,
+      password: userData.password,
+      provider: 'local',
+      confirmed: true,
+      blocked: false,
+      role: roleId
+    })
+
+    return user
+  } catch (error) {
+    throw new Error(`Failed to create test user with role: ${error.message}`)
+  }
+}
+
+export async function isAdministratorUser(userId: number | string): Promise<boolean> {
+  const strapi = getStrapi()
+
+  try {
+    const user = await strapi.query('plugin::users-permissions.user').findOne({
+      where: { id: userId },
+      populate: ['role']
+    })
+
+    if (!user) {
+      return false
+    }
+
+    return user.role?.type === 'administrator'
+  } catch (error) {
+    throw new Error(`Failed to check if user is administrator: ${error.message}`)
   }
 }
 

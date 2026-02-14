@@ -22,7 +22,6 @@ export default {
     // for find, findOne, and create actions on orders
 
     try {
-      // Get the authenticated role
       const authenticatedRole = await strapi.query('plugin::users-permissions.role').findOne({
         where: { type: 'authenticated' }
       });
@@ -32,14 +31,12 @@ export default {
         return;
       }
 
-      // Define permissions for Order content type
       const orderPermissions = [
         { action: 'api::order.order.find', enabled: true },
         { action: 'api::order.order.findOne', enabled: true },
         { action: 'api::order.order.create', enabled: true },
       ];
 
-      // Check and create/update permissions
       for (const perm of orderPermissions) {
         const existingPermission = await strapi.query('plugin::users-permissions.permission').findOne({
           where: {
@@ -49,7 +46,6 @@ export default {
         });
 
         if (existingPermission) {
-          // Update existing permission
           if (!existingPermission.enabled) {
             await strapi.query('plugin::users-permissions.permission').update({
               where: { id: existingPermission.id },
@@ -58,7 +54,6 @@ export default {
             strapi.log.info(`[ORD-26] Updated permission: ${perm.action}`);
           }
         } else {
-          // Create new permission
           await strapi.query('plugin::users-permissions.permission').create({
             data: {
               action: perm.action,
@@ -73,6 +68,63 @@ export default {
       strapi.log.info('[ORD-26] Order API permissions configured successfully');
     } catch (error) {
       strapi.log.error('[ORD-26] Error configuring Order permissions:', error);
+    }
+
+    // [ORD-30] Setup administrator role and permissions
+    try {
+      let adminRole = await strapi.query('plugin::users-permissions.role').findOne({
+        where: { type: 'administrator' }
+      });
+
+      if (!adminRole) {
+        adminRole = await strapi.query('plugin::users-permissions.role').create({
+          data: {
+            name: 'Administrator',
+            description: 'Full administrative access to all resources',
+            type: 'administrator',
+          },
+        });
+        strapi.log.info('[ORD-30] Administrator role created');
+      }
+
+      const adminOrderPermissions = [
+        'api::order.order.find',
+        'api::order.order.findOne',
+        'api::order.order.create',
+        'api::order.order.update',
+        'api::order.order.delete',
+        'api::order.order.search',
+      ];
+
+      for (const action of adminOrderPermissions) {
+        const existingPermission = await strapi.query('plugin::users-permissions.permission').findOne({
+          where: {
+            action,
+            role: adminRole.id
+          }
+        });
+
+        if (existingPermission) {
+          if (!existingPermission.enabled) {
+            await strapi.query('plugin::users-permissions.permission').update({
+              where: { id: existingPermission.id },
+              data: { enabled: true }
+            });
+          }
+        } else {
+          await strapi.query('plugin::users-permissions.permission').create({
+            data: {
+              action,
+              role: adminRole.id,
+              enabled: true
+            }
+          });
+        }
+      }
+
+      strapi.log.info('[ORD-30] Administrator role permissions configured successfully');
+    } catch (error) {
+      strapi.log.error('[ORD-30] Error configuring administrator role:', error);
     }
   },
 };
