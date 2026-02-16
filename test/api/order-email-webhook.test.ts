@@ -129,11 +129,11 @@ describe('[ORD-24] Order Email Webhook - Lifecycle Integration', () => {
     console.log('✅ Mock fetch configured')
 
     /**
-     * Crear orden inicial con estado 'paid'
+     * Crear orden inicial con estado 'processing'
      *
-     * ¿Por qué empezar en 'paid'?
-     * - En producción, las órdenes pasan de pending → paid (después de Stripe)
-     * - Luego el admin cambia paid → shipped
+     * ¿Por qué empezar en 'processing'?
+     * - En producción, las órdenes pasan de pending → paid → processing (después de Stripe y preparación)
+     * - Luego el admin cambia processing → shipped
      * - Este es el flujo real que queremos testear
      */
     const initialOrder = await createTestOrder(
@@ -149,7 +149,7 @@ describe('[ORD-24] Order Email Webhook - Lifecycle Integration', () => {
         subtotal: 199.99,
         shipping: 10.00,
         total: 209.99,
-        orderStatus: 'paid' // Estado inicial
+        orderStatus: 'processing' // Estado inicial
       },
       testUser.id
     )
@@ -158,7 +158,7 @@ describe('[ORD-24] Order Email Webhook - Lifecycle Integration', () => {
 
     // Verificar que el order se creó correctamente
     expect(initialOrder).toBeDefined()
-    expect(initialOrder.orderStatus).toBe('paid')
+    expect(initialOrder.orderStatus).toBe('processing')
     // Note: No verificamos .user aquí porque createTestOrder ya lo valida internamente
     // El lifecycle hook hará su propio populate cuando envíe el webhook
 
@@ -318,14 +318,14 @@ describe('[ORD-24] Order Email Webhook - Lifecycle Integration', () => {
     })
     vi.stubGlobal('fetch', mockFetch)
 
-    // 3. Crear orden inicial en 'paid'
+    // 3. Crear orden inicial en 'processing'
     const initialOrder = await createTestOrder(
       {
         items: [{ productId: 1, name: 'Reloj Test', price: 100, quantity: 1 }],
         subtotal: 100,
         shipping: 5,
         total: 105,
-        orderStatus: 'paid'
+        orderStatus: 'processing'
       },
       testUser.id
     )
@@ -516,7 +516,7 @@ describe('[ORD-24] Order Email Webhook - Lifecycle Integration', () => {
           subtotal: 10,
           shipping: 0,
           total: 10,
-          orderStatus: 'paid'
+          orderStatus: 'processing'
         },
         testUser.id
       )

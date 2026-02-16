@@ -1,10 +1,12 @@
 /**
  * Order lifecycle hooks
- * 
+ *
  * Automatically assigns the authenticated user to new orders.
  * This is necessary because Strapi v5 rejects the "user" field in REST API requests
  * with "Invalid key user" error when trying to set relations directly.
  */
+
+import { validateOrderTransition } from '../../helpers/validate-order-transition'
 
 export default {
   async beforeCreate(event) {
@@ -32,20 +34,36 @@ export default {
   /**
      * beforeUpdate hook
      * [ORD-22] Store previous orderStatus for comparison
+     * [ORD-32] Validate order status transitions
      */
   async beforeUpdate(event) {
-      const { where } = event.params;
+      const { where, data } = event.params;
 
       // Get current order to compare status later
       const existingOrder = await strapi.entityService.findOne('api::order.order', where.id, {
         fields: ['orderStatus'],
       });
 
+      const currentStatus = existingOrder?.orderStatus
+      const newStatus = data.orderStatus
+
+      // [ORD-32] Validate status transition if status is being changed
+      if (newStatus && currentStatus && newStatus !== currentStatus) {
+        const validation = validateOrderTransition(currentStatus, newStatus)
+
+        if (!validation.valid) {
+          strapi.log.warn(`[ORD-32] Invalid status transition attempted: ${currentStatus} → ${newStatus} for order ${where.id}. Error: ${validation.error}`)
+          throw new Error(validation.error)
+        }
+
+        strapi.log.info(`[ORD-32] Valid status transition: ${currentStatus} → ${newStatus} for order ${where.id}`)
+      }
+
       // Store previous status in event state for afterUpdate hook
       event.state = event.state || {};
-      event.state.previousOrderStatus = existingOrder?.orderStatus;
+      event.state.previousOrderStatus = currentStatus;
 
-      strapi.log.debug(`[ORD-22] beforeUpdate: Stored previous status = ${existingOrder?.orderStatus}`);
+      strapi.log.debug(`[ORD-22] beforeUpdate: Stored previous status = ${currentStatus}`);
     },
   /**
      * afterUpdate hook
