@@ -20,7 +20,7 @@ async function createStatusHistoryEntry(
   orderId: number,
   fromStatus: string | null,
   toStatus: string,
-  changedByEmail: string = 'system',
+  changedByEmail: string = 'system@example.com',
   note?: string
 ) {
   try {
@@ -81,7 +81,7 @@ export default {
     try {
       // Get request context to access authenticated user
       const ctx = strapi.requestContext.get();
-      const changedByEmail = ctx?.state?.user?.email || 'system'
+      const changedByEmail = ctx?.state?.user?.email || 'system@example.com'
 
       // Create initial status history entry (from null to current status)
       await createStatusHistoryEntry(
@@ -104,34 +104,34 @@ export default {
      * [ORD-32] Validate order status transitions
      */
   async beforeUpdate(event) {
-      const { where, data } = event.params;
+    const { where, data } = event.params;
 
-      // Get current order to compare status later
-      const existingOrder = await strapi.entityService.findOne('api::order.order', where.id, {
-        fields: ['orderStatus'],
-      });
+    // Get current order to compare status later
+    const existingOrder = await strapi.entityService.findOne('api::order.order', where.id, {
+      fields: ['orderStatus'],
+    });
 
-      const currentStatus = existingOrder?.orderStatus
-      const newStatus = data.orderStatus
+    const currentStatus = existingOrder?.orderStatus
+    const newStatus = data.orderStatus
 
-      // [ORD-32] Validate status transition if status is being changed
-      if (newStatus && currentStatus && newStatus !== currentStatus) {
-        const validation = validateOrderTransition(currentStatus, newStatus)
+    // [ORD-32] Validate status transition if status is being changed
+    if (newStatus && currentStatus && newStatus !== currentStatus) {
+      const validation = validateOrderTransition(currentStatus, newStatus)
 
-        if (!validation.valid) {
-          strapi.log.warn(`[ORD-32] Invalid status transition attempted: ${currentStatus} → ${newStatus} for order ${where.id}. Error: ${validation.error}`)
-          throw new Error(validation.error)
-        }
-
-        strapi.log.info(`[ORD-32] Valid status transition: ${currentStatus} → ${newStatus} for order ${where.id}`)
+      if (!validation.valid) {
+        strapi.log.warn(`[ORD-32] Invalid status transition attempted: ${currentStatus} → ${newStatus} for order ${where.id}. Error: ${validation.error}`)
+        throw new Error(validation.error)
       }
 
-      // Store previous status in event state for afterUpdate hook
-      event.state = event.state || {};
-      event.state.previousOrderStatus = currentStatus;
+      strapi.log.info(`[ORD-32] Valid status transition: ${currentStatus} → ${newStatus} for order ${where.id}`)
+    }
 
-      strapi.log.debug(`[ORD-22] beforeUpdate: Stored previous status = ${currentStatus}`);
-    },
+    // Store previous status in event state for afterUpdate hook
+    event.state = event.state || {};
+    event.state.previousOrderStatus = currentStatus;
+
+    strapi.log.debug(`[ORD-22] beforeUpdate: Stored previous status = ${currentStatus}`);
+  },
   /**
       * afterUpdate hook
       * [ORD-22] Sends email notification when order status changes
@@ -154,7 +154,7 @@ export default {
 
       // 2. Get request context to access authenticated user
       const ctx = strapi.requestContext.get();
-      const changedByEmail = ctx?.state?.user?.email || 'system'
+      const changedByEmail = ctx?.state?.user?.email || 'system@example.com'
 
       // 3. [ORD-33] Create status history entry
       await createStatusHistoryEntry(
@@ -203,7 +203,7 @@ export default {
         },
       }
 
-      strapi.log.debug(`[ORD-22] Payload prepared:`, {orderId: result.orderId, status: newStatus})
+      strapi.log.debug(`[ORD-22] Payload prepared:`, { orderId: result.orderId, status: newStatus })
 
       // 7. Call Next.js webhook
       const frontendUrl = process.env.FRONTEND_URL

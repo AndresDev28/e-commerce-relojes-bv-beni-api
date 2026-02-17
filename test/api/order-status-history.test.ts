@@ -75,7 +75,7 @@ describe('[ORD-33] Order Status History - Audit Log', () => {
       const historyEntry = historyEntries[0]
       expect(historyEntry.fromStatus).toBeNull()
       expect(historyEntry.toStatus).toBe('pending')
-      expect(historyEntry.changedByEmail).toBe('system')
+      expect(historyEntry.changedByEmail).toBe('system@example.com')
       expect(historyEntry.changedAt).toBeDefined()
 
       console.log('✅ [HT-1] PASSED: Initial status history entry created')
@@ -106,7 +106,7 @@ describe('[ORD-33] Order Status History - Audit Log', () => {
       const latestEntry = historyEntries[0]
       expect(latestEntry.fromStatus).toBe('pending')
       expect(latestEntry.toStatus).toBe('paid')
-      expect(latestEntry.changedByEmail).toBe('system')
+      expect(latestEntry.changedByEmail).toBe('system@example.com')
 
       console.log('✅ [HT-2] PASSED: Status history entry created on change')
     })
@@ -228,13 +228,13 @@ describe('[ORD-33] Order Status History - Audit Log', () => {
         data: { orderStatus: 'paid' }
       })
 
-      await new Promise(resolve => setTimeout(resolve, 50))
+      await new Promise(resolve => setTimeout(resolve, 100))
 
       await strapi.entityService.update('api::order.order', order.id, {
         data: { orderStatus: 'processing' }
       })
 
-      await new Promise(resolve => setTimeout(resolve, 50))
+      await new Promise(resolve => setTimeout(resolve, 100))
 
       await strapi.entityService.update('api::order.order', order.id, {
         data: { orderStatus: 'shipped' }
@@ -247,7 +247,7 @@ describe('[ORD-33] Order Status History - Audit Log', () => {
 
       const timestamps = historyEntries.map(h => new Date(h.changedAt))
       for (let i = 0; i < timestamps.length - 1; i++) {
-        expect(timestamps[i + 1].getTime()).toBeGreaterThanOrEqual(timestamps[i].getTime())
+        expect(timestamps[i].getTime()).toBeGreaterThanOrEqual(timestamps[i + 1].getTime())
       }
 
       console.log('✅ [HT-6] PASSED: Chronological order maintained')
@@ -318,7 +318,7 @@ describe('[ORD-33] Order Status History - Audit Log', () => {
         sort: { changedAt: 'desc' }
       })
 
-      expect(historyEntries[0].changedByEmail).toBe('system')
+      expect(historyEntries[0].changedByEmail).toBe('system@example.com')
 
       console.log('✅ [HT-8] PASSED: Admin/system email tracked')
     })
@@ -339,7 +339,7 @@ describe('[ORD-33] Order Status History - Audit Log', () => {
         sort: { changedAt: 'desc' }
       })
 
-      expect(historyEntries[0].changedByEmail).toBe('system')
+      expect(historyEntries[0].changedByEmail).toBe('system@example.com')
 
       console.log('✅ [HT-9] PASSED: System recorded correctly')
     })
@@ -381,8 +381,8 @@ describe('[ORD-33] Order Status History - Audit Log', () => {
         sort: { changedAt: 'desc' }
       })
 
-      expect(history1[1].changedByEmail).toBe('system')
-      expect(history2[1].changedByEmail).toBe('system')
+      expect(history1[1].changedByEmail).toBe('system@example.com')
+      expect(history2[1].changedByEmail).toBe('system@example.com')
 
       console.log('✅ [HT-10] PASSED: Different admins tracked')
     })
