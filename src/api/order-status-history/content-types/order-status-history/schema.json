@@ -1,0 +1,59 @@
+{
+  "kind": "collectionType",
+  "collectionName": "order_status_histories",
+  "info": {
+    "singularName": "order-status-history",
+    "pluralName": "order-status-histories",
+    "displayName": "Order Status History",
+    "description": "Audit log of order status changes"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "fromStatus": {
+      "type": "enumeration",
+      "enum": [
+        "pending",
+        "paid",
+        "processing",
+        "shipped",
+        "delivered",
+        "cancelled",
+        "refunded"
+      ],
+      "required": true,
+      "default": "pending"
+    },
+    "toStatus": {
+      "type": "enumeration",
+      "enum": [
+        "pending",
+        "paid",
+        "processing",
+        "shipped",
+        "delivered",
+        "cancelled",
+        "refunded"
+      ],
+      "required": true
+    },
+    "changedAt": {
+      "type": "datetime",
+      "required": true,
+      "default": "now"
+    },
+    "changedByEmail": {
+      "type": "string"
+    },
+    "note": {
+      "type": "text"
+    },
+    "order": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::order.order"
+    }
+  }
+}
