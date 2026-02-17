@@ -4,8 +4,7 @@
   "info": {
     "singularName": "order-status-history",
     "pluralName": "order-status-histories",
-    "displayName": "Order Status History",
-    "description": "Audit log of order status changes"
+    "displayName": "OrderStatusHistory"
   },
   "options": {
     "draftAndPublish": false
@@ -14,6 +13,8 @@
   "attributes": {
     "fromStatus": {
       "type": "enumeration",
+      "required": true,
+      "default": "pending",
       "enum": [
         "pending",
         "paid",
@@ -22,12 +23,11 @@
         "delivered",
         "cancelled",
         "refunded"
-      ],
-      "required": true,
-      "default": "pending"
+      ]
     },
     "toStatus": {
       "type": "enumeration",
+      "required": true,
       "enum": [
         "pending",
         "paid",
@@ -36,24 +36,24 @@
         "delivered",
         "cancelled",
         "refunded"
-      ],
-      "required": true
+      ]
     },
     "changedAt": {
       "type": "datetime",
-      "required": true,
-      "default": "now"
+      "required": true
     },
     "changedByEmail": {
-      "type": "string"
+      "type": "email"
     },
     "note": {
-      "type": "text"
+      "type": "string",
+      "maxLength": 5000
     },
     "order": {
       "type": "relation",
       "relation": "manyToOne",
-      "target": "api::order.order"
+      "target": "api::order.order",
+      "inversedBy": "order_status_histories"
     }
   }
 }

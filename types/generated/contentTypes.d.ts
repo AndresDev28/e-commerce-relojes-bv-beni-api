@@ -408,8 +408,7 @@ export interface ApiOrderStatusHistoryOrderStatusHistory
   extends Struct.CollectionTypeSchema {
   collectionName: 'order_status_histories';
   info: {
-    description: 'Audit log of order status changes';
-    displayName: 'Order Status History';
+    displayName: 'OrderStatusHistory';
     pluralName: 'order-status-histories';
     singularName: 'order-status-history';
   };
@@ -417,10 +416,8 @@ export interface ApiOrderStatusHistoryOrderStatusHistory
     draftAndPublish: false;
   };
   attributes: {
-    changedAt: Schema.Attribute.DateTime &
-      Schema.Attribute.Required &
-      Schema.Attribute.DefaultTo<'now'>;
-    changedByEmail: Schema.Attribute.String;
+    changedAt: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    changedByEmail: Schema.Attribute.Email;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
@@ -443,7 +440,10 @@ export interface ApiOrderStatusHistoryOrderStatusHistory
       'api::order-status-history.order-status-history'
     > &
       Schema.Attribute.Private;
-    note: Schema.Attribute.Text;
+    note: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 5000;
+      }>;
     order: Schema.Attribute.Relation<'manyToOne', 'api::order.order'>;
     publishedAt: Schema.Attribute.DateTime;
     toStatus: Schema.Attribute.Enumeration<
@@ -483,6 +483,10 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<'oneToMany', 'api::order.order'> &
       Schema.Attribute.Private;
+    order_status_histories: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::order-status-history.order-status-history'
+    >;
     orderId: Schema.Attribute.String &
       Schema.Attribute.Required &
       Schema.Attribute.Unique;

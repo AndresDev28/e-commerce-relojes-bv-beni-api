@@ -35,13 +35,14 @@ async function createStatusHistoryEntry(
       }
     })
 
-    strapi.log.info(`[ORD-33] Status change logged: ${fromStatus || 'initial'} → ${toStatus} for order ID ${orderId} by ${changedByEmail}`)
+    console.log(`[ORD-33] Status change logged: ${fromStatus || 'initial'} → ${toStatus} for order ID ${orderId} by ${changedByEmail}`)
   } catch (error) {
-    strapi.log.error(`[ORD-33] Failed to create status history entry:`, {
+    console.error(`[ORD-33] Failed to create status history entry:`, {
       orderId,
       fromStatus,
       toStatus,
-      error: error.message
+      error: error.message || error?.toString() || String(error),
+      stack: error.stack
     })
   }
 }
