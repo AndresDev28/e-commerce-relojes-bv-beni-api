@@ -1,10 +1,51 @@
 /**
  * Order lifecycle hooks
- * 
+ *
  * Automatically assigns the authenticated user to new orders.
  * This is necessary because Strapi v5 rejects the "user" field in REST API requests
  * with "Invalid key user" error when trying to set relations directly.
+ *
+ * [ORD-33] Creates status history entries for audit purposes
  */
+
+import { validateOrderTransition } from '../../helpers/validate-order-transition'
+
+/**
+ * Helper function to create status history entry
+ * [ORD-33] Centralized logic for status history recording
+ * Uses unidirectional relation (manyToOne from statusHistory to order)
+ */
+async function createStatusHistoryEntry(
+  strapi: any,
+  orderId: number,
+  fromStatus: string | null,
+  toStatus: string,
+  changedByEmail: string = 'system@example.com',
+  note?: string
+) {
+  try {
+    await strapi.entityService.create('api::order-status-history.order-status-history', {
+      data: {
+        fromStatus,
+        toStatus,
+        changedAt: new Date(),
+        changedByEmail,
+        note: note || undefined,
+        order: { connect: [orderId] }
+      }
+    })
+
+    console.log(`[ORD-33] Status change logged: ${fromStatus || 'initial'} → ${toStatus} for order ID ${orderId} by ${changedByEmail}`)
+  } catch (error) {
+    console.error(`[ORD-33] Failed to create status history entry:`, {
+      orderId,
+      fromStatus,
+      toStatus,
+      error: error.message || error?.toString() || String(error),
+      stack: error.stack
+    })
+  }
+}
 
 export default {
   async beforeCreate(event) {
@@ -29,51 +70,109 @@ export default {
       strapi.log.warn('Order lifecycle: No authenticated user found in request context or payload')
     }
   },
+
+  /**
+   * afterCreate hook
+   * [ORD-33] Create initial status history entry when order is created
+   */
+  async afterCreate(event) {
+    const { result } = event
+
+    try {
+      // Get request context to access authenticated user
+      const ctx = strapi.requestContext.get();
+      const changedByEmail = ctx?.state?.user?.email || 'system@example.com'
+
+      // Create initial status history entry (from null to current status)
+      await createStatusHistoryEntry(
+        strapi,
+        result.id,
+        null, // No previous status for new orders
+        result.orderStatus,
+        changedByEmail
+      )
+    } catch (error) {
+      strapi.log.error(`[ORD-33] Exception in afterCreate hook:`, {
+        orderId: result?.id,
+        error: error.message,
+      })
+    }
+  },
   /**
      * beforeUpdate hook
      * [ORD-22] Store previous orderStatus for comparison
+     * [ORD-32] Validate order status transitions
      */
   async beforeUpdate(event) {
-      const { where } = event.params;
+    const { where, data } = event.params;
 
-      // Get current order to compare status later
-      const existingOrder = await strapi.entityService.findOne('api::order.order', where.id, {
-        fields: ['orderStatus'],
-      });
+    // Get current order to compare status later
+    const existingOrder = await strapi.entityService.findOne('api::order.order', where.id, {
+      fields: ['orderStatus'],
+    });
 
-      // Store previous status in event state for afterUpdate hook
-      event.state = event.state || {};
-      event.state.previousOrderStatus = existingOrder?.orderStatus;
+    const currentStatus = existingOrder?.orderStatus
+    const newStatus = data.orderStatus
 
-      strapi.log.debug(`[ORD-22] beforeUpdate: Stored previous status = ${existingOrder?.orderStatus}`);
-    },
+    // [ORD-32] Validate status transition if status is being changed
+    if (newStatus && currentStatus && newStatus !== currentStatus) {
+      const validation = validateOrderTransition(currentStatus, newStatus)
+
+      if (!validation.valid) {
+        strapi.log.warn(`[ORD-32] Invalid status transition attempted: ${currentStatus} → ${newStatus} for order ${where.id}. Error: ${validation.error}`)
+        throw new Error(validation.error)
+      }
+
+      strapi.log.info(`[ORD-32] Valid status transition: ${currentStatus} → ${newStatus} for order ${where.id}`)
+    }
+
+    // Store previous status in event state for afterUpdate hook
+    event.state = event.state || {};
+    event.state.previousOrderStatus = currentStatus;
+
+    strapi.log.debug(`[ORD-22] beforeUpdate: Stored previous status = ${currentStatus}`);
+  },
   /**
-     * afterUpdate hook
-     * [ORD-22] Sends email notification when order status changes
-     */
+      * afterUpdate hook
+      * [ORD-22] Sends email notification when order status changes
+      * [ORD-33] Creates status history entry for audit purposes
+      */
   async afterUpdate(event) {
     const { result } = event
 
     try {
-      // 1. Check if email notifications are enable
+      // 1. Check if orderStatus actually changed (not just updated)
+      const previousStatus = event.state?.previousOrderStatus
+      const newStatus = result.orderStatus
+
+      if (previousStatus === newStatus) {
+        strapi.log.debug(`[ORD-22/33] Order ${result.orderId}: orderStatus unchanged (${newStatus}), skipping history and email`);
+        return;
+      }
+
+      strapi.log.info(`[ORD-22/33] Order ${result.orderId}: Status changed ${previousStatus} → ${newStatus}`)
+
+      // 2. Get request context to access authenticated user
+      const ctx = strapi.requestContext.get();
+      const changedByEmail = ctx?.state?.user?.email || 'system@example.com'
+
+      // 3. [ORD-33] Create status history entry
+      await createStatusHistoryEntry(
+        strapi,
+        result.id,
+        previousStatus,
+        newStatus,
+        changedByEmail
+      )
+
+      // 4. [ORD-22] Check if email notifications are enabled
       const emailNotificationsDisabled = process.env.DISABLE_EMAIL_NOTIFICATIONS === 'true'
       if (emailNotificationsDisabled) {
         strapi.log.info('[ORD-22] Email notification disabled via env var')
         return
       }
 
-      // 2. Check if orderStatus actually changed (not just updated)
-      const previousStatus = event.state?.previousOrderStatus
-      const newStatus = result.orderStatus
-
-      if (previousStatus === newStatus) {
-        strapi.log.debug(`[ORD-22] Order ${result.orderId}: orderStatus unchanged (${newStatus}), skipping email`);
-        return;
-      }
-
-      strapi.log.info(`[ORD-22] Order ${result.orderId}: Status changed ${previousStatus} → ${newStatus}`)
-
-      // 3. Get user mail
+      // 5. Get user mail
       // Important: Need to populate user relation to get email
       const order: any = await strapi.entityService.findOne('api::order.order', result.id, {
         populate: ['user'],
@@ -88,8 +187,8 @@ export default {
       const customerName = order.user.username || 'Cliente'
 
       strapi.log.info(`[ORD-22] Order ${result.orderId}: Sending email to ${customerEmail}`)
-      
-      // 4. Prepare webhook payload
+
+      // 6. Prepare webhook payload
       const payload = {
         orderId: result.orderId,
         customerEmail,
@@ -104,9 +203,9 @@ export default {
         },
       }
 
-      strapi.log.debug(`[ORD-22] Payload prepared:`, {orderId: result.orderId, status: newStatus})
+      strapi.log.debug(`[ORD-22] Payload prepared:`, { orderId: result.orderId, status: newStatus })
 
-      // 5. Call Next.js webhook
+      // 7. Call Next.js webhook
       const frontendUrl = process.env.FRONTEND_URL
       const webhookSecret = process.env.WEBHOOK_SECRET
 
@@ -128,7 +227,7 @@ export default {
         body: JSON.stringify(payload),
       })
 
-      // 6. Handle response
+      // 8. Handle response
       const responseData = await response.json()
 
       if (response.ok) {
@@ -141,7 +240,7 @@ export default {
       }
     } catch (error) {
       // Error handling - NEVER throw, just log
-      strapi.log.error(`[ORD-22] Exception in afterUpdate hook:`, {
+      strapi.log.error(`[ORD-22/33] Exception in afterUpdate hook:`, {
         orderId: result?.orderId,
         error: error.message,
       })

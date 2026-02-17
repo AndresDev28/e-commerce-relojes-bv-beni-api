@@ -1,0 +1,59 @@
+{
+  "kind": "collectionType",
+  "collectionName": "order_status_histories",
+  "info": {
+    "singularName": "order-status-history",
+    "pluralName": "order-status-histories",
+    "displayName": "OrderStatusHistory"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "fromStatus": {
+      "type": "enumeration",
+      "required": false,
+      "default": "pending",
+      "enum": [
+        "pending",
+        "paid",
+        "processing",
+        "shipped",
+        "delivered",
+        "cancelled",
+        "refunded"
+      ]
+    },
+    "toStatus": {
+      "type": "enumeration",
+      "required": true,
+      "enum": [
+        "pending",
+        "paid",
+        "processing",
+        "shipped",
+        "delivered",
+        "cancelled",
+        "refunded"
+      ]
+    },
+    "changedAt": {
+      "type": "datetime",
+      "required": true
+    },
+    "changedByEmail": {
+      "type": "email"
+    },
+    "note": {
+      "type": "string",
+      "maxLength": 5000
+    },
+    "order": {
+      "type": "relation",
+      "relation": "manyToOne",
+      "target": "api::order.order",
+      "inversedBy": "order_status_histories"
+    }
+  }
+}

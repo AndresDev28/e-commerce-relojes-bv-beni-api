@@ -1185,3 +1185,61 @@ const { data: userData } = await fetchClient.get(
 
 **Resultado Final:**
 La búsqueda por email ahora localiza correctamente a los clientes y filtra sus órdenes asociadas en el listado.
+
+---
+
+## Desafío #11: Corrección de Tests de Historial de Estado de Órdenes (ORD-33)
+
+**Fecha:** 2026-02-17
+**Objetivo:** Resolver fallos en los tests del historial de estados de órdenes para asegurar la integridad de los logs de auditoría y evitar regresiones en el sistema de historial de cambios.
+
+### Obstáculo 1: Error de Validación de Schema `fromStatus`
+
+**Síntoma:**
+Al crear una nueva orden, el sistema intentaba registrar el historial inicial (`null` → `pending`), pero fallaba con un error de validación.
+
+**Análisis:**
+El campo `fromStatus` en el `schema.json` de `order-status-history` estaba marcado como `required: true`. Sin embargo, para la entrada inicial del historial, no existe un estado previo, por lo que el valor es `null`.
+
+**Solución:**
+Se modificó el schema para permitir valores nulos en `fromStatus`:
+```json
+"fromStatus": {
+  "type": "enumeration",
+  "required": false, // Cambiado de true a false
+  ...
+}
+```
+
+### Obstáculo 2: Error de Formato de Email en `changedByEmail`
+
+**Síntoma:**
+Los tests fallaban con `ValidationError: changedByEmail must be a valid email`.
+
+**Análisis:**
+El campo `changedByEmail` es de tipo `email`. El valor por defecto en los lifecycles (cuando el cambio lo hace el sistema) era el string `"system"`, que no es un formato de email válido.
+
+**Solución:**
+Se actualizó el valor por defecto en `lifecycles.ts` y en la función helper `createStatusHistoryEntry`:
+```typescript
+const changedByEmail = ctx?.state?.user?.email || 'system@example.com'
+```
+
+### Obstáculo 3: Lógica de Test Incorrecta (Orden Cronológico)
+
+**Síntoma:**
+El test `[HT-6] should maintain chronological order` fallaba intermitentemente o por lógica incorrecta.
+
+**Análisis:**
+El test verificaba que los timestamps estuvieran en orden ascendente, pero la consulta a la API ordenaba por `changedAt: 'desc'` (descendente). Además, los cambios de estado ocurrían tan rápido (<1ms) que los timestamps eran idénticos, causando confusión en el ordenamiento.
+
+**Solución:**
+1.  Se corrigió la lógica de aserción para verificar orden descendente.
+2.  Se añadieron pequeños delays (`setTimeout(100)`) entre actualizaciones en el test para garantizar timestamps distintos.
+
+### Resultado Final
+
+Tras aplicar estas correcciones:
+-   Los 15 tests de `test/api/order-status-history.test.ts` pasan exitosamente (100%).
+-   El historial de cambios se registra correctamente tanto para creación de órdenes como para actualizaciones de estado.
+-   Se mantiene la integridad de los datos de auditoría con validaciones correctas.
