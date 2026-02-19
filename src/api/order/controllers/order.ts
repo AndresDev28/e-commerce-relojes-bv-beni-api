@@ -198,4 +198,32 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
       meta: { pagination: { total: entity.length } }
     }
   },
+
+  /**
+   * PUT /api/orders/:id
+   *
+   * [ORD-34] Validates statusChangeNote field before updating.
+   * - Must be a string if provided
+   * - Must not exceed 5000 characters
+   */
+  async update(ctx) {
+    const { id } = ctx.params
+    const statusChangeNote = ctx.request.body?.data?.statusChangeNote
+
+    if (statusChangeNote !== undefined && statusChangeNote !== null) {
+      if (typeof statusChangeNote !== 'string') {
+        strapi.log.warn(`[ORD-34] Invalid statusChangeNote type for order ${id}: expected string, got ${typeof statusChangeNote}`)
+        return ctx.badRequest('statusChangeNote must be a string')
+      }
+
+      if (statusChangeNote.length > 5000) {
+        strapi.log.warn(`[ORD-34] statusChangeNote exceeds max length for order ${id}: ${statusChangeNote.length} characters`)
+        return ctx.badRequest('statusChangeNote must not exceed 5000 characters')
+      }
+
+      strapi.log.info(`[ORD-34] statusChangeNote validated for order ${id} (${statusChangeNote.length} characters)`)
+    }
+
+    return super.update(ctx)
+  },
 }));

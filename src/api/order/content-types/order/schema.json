@@ -64,6 +64,10 @@
     "deliveredAt": {
       "type": "date"
     },
+    "statusChangeNote": {
+      "type": "string",
+      "maxLength": 5000
+    },
     "order_status_histories": {
       "type": "relation",
       "relation": "oneToMany",
