@@ -432,7 +432,6 @@ export interface ApiOrderStatusHistoryOrderStatusHistory
         'refunded',
       ]
     > &
-      Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'pending'>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
     localizations: Schema.Attribute.Relation<

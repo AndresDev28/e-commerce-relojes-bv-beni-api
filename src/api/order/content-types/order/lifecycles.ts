@@ -102,6 +102,7 @@ export default {
      * beforeUpdate hook
      * [ORD-22] Store previous orderStatus for comparison
      * [ORD-32] Validate order status transitions
+     * [ORD-34] Capture statusChangeNote from update payload
      */
   async beforeUpdate(event) {
     const { where, data } = event.params;
@@ -130,13 +131,23 @@ export default {
     event.state = event.state || {};
     event.state.previousOrderStatus = currentStatus;
 
+    // [ORD-34] Capture statusChangeNote from update payload for use in afterUpdate
+    const { statusChangeNote } = data
+    if (statusChangeNote !== undefined) {
+      event.state.statusChangeNote = statusChangeNote || null
+      strapi.log.debug(`[ORD-34] beforeUpdate: Captured statusChangeNote = "${statusChangeNote}"`);
+      // Remove from data so it doesn't persist in Order entity
+      delete data.statusChangeNote
+    }
+
     strapi.log.debug(`[ORD-22] beforeUpdate: Stored previous status = ${currentStatus}`);
   },
   /**
-      * afterUpdate hook
-      * [ORD-22] Sends email notification when order status changes
-      * [ORD-33] Creates status history entry for audit purposes
-      */
+       * afterUpdate hook
+       * [ORD-22] Sends email notification when order status changes
+       * [ORD-33] Creates status history entry for audit purposes
+       * [ORD-34] Passes statusChangeNote to history and webhook
+       */
   async afterUpdate(event) {
     const { result } = event
 
@@ -144,6 +155,8 @@ export default {
       // 1. Check if orderStatus actually changed (not just updated)
       const previousStatus = event.state?.previousOrderStatus
       const newStatus = result.orderStatus
+      // [ORD-34] Retrieve statusChangeNote captured in beforeUpdate
+      const statusChangeNote = event.state?.statusChangeNote || null
 
       if (previousStatus === newStatus) {
         strapi.log.debug(`[ORD-22/33] Order ${result.orderId}: orderStatus unchanged (${newStatus}), skipping history and email`);
@@ -151,18 +164,22 @@ export default {
       }
 
       strapi.log.info(`[ORD-22/33] Order ${result.orderId}: Status changed ${previousStatus} → ${newStatus}`)
+      if (statusChangeNote) {
+        strapi.log.debug(`[ORD-34] Order ${result.orderId}: Status change note = "${statusChangeNote}"`)
+      }
 
       // 2. Get request context to access authenticated user
       const ctx = strapi.requestContext.get();
       const changedByEmail = ctx?.state?.user?.email || 'system@example.com'
 
-      // 3. [ORD-33] Create status history entry
+      // 3. [ORD-33/34] Create status history entry with note
       await createStatusHistoryEntry(
         strapi,
         result.id,
         previousStatus,
         newStatus,
-        changedByEmail
+        changedByEmail,
+        statusChangeNote
       )
 
       // 4. [ORD-22] Check if email notifications are enabled
@@ -194,6 +211,7 @@ export default {
         customerEmail,
         customerName,
         orderStatus: newStatus,
+        statusChangeNote, // [ORD-34] Include note in webhook payload
         orderData: {
           items: result.items,
           subtotal: parseFloat(result.subtotal),
