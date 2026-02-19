@@ -130,3 +130,8 @@ build
 .strapi-updater.json
 .strapi-cloud.json
 telemetry-id
+
+# Temporary and accidental files
+:memory:
+relojes-bv-beni-api@0.1.0
+strapi

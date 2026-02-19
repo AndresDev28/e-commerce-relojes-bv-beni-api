@@ -700,74 +700,116 @@ interface StatusChange {
 
 ---
 
-## Próximos EPICs (después del 15)
+## EPIC 16: Sistema de cancelaciones y reembolsos
 
-- **EPIC 16:** Sistema de cancelaciones y reembolsos
-- **EPIC 17:** Gestión de envíos e integración con transportistas
-- **EPIC 18:** Dashboard de analytics de pedidos
+### Contexto
 
-## Deuda Técnica
+Para ofrecer una experiencia de cliente profesional, el sistema debe permitir a los usuarios solicitar la cancelación de sus pedidos bajo ciertas condiciones (ej. antes de que sean enviados). Los administradores deben poder procesar estas solicitudes y, cuando corresponda, emitir reembolsos automáticos a través de Stripe de manera segura y trazable.
 
-  Esta sección documenta deuda técnica identificada durante el desarrollo que debe abordarse antes de producción o en iteraciones futuras.
+---
 
-  ## [TECH-DEBT-001] Reparar tests fallidos del frontend
+## User Story 1: Solicitar cancelación de pedido
 
-  **Tipo:** Deuda Técnica
-  **Prioridad:** Media
-  **Severidad:** Baja (no bloquea UX)
-  **Sprint:** Post-MVP
+**Como** cliente registrado  
+**Quiero** poder solicitar la cancelación de mi pedido desde mi historial  
+**Para** corregir errores en mi compra antes de que el producto sea enviado
 
-  ### Contexto
+### Criterios de Aceptación
 
-  Durante el desarrollo del MVP se acumularon tests fallidos que no fueron priorizados para mantener el ritmo de entrega de features. Los tests no bloquean funcionalidad pero reducen la confianza en el suite de pruebas.
+```gherkin
+Feature: Solicitud de cancelación por el cliente
 
-  ### Estado Actual (2026-01-19)
+Scenario: Cliente solicita cancelación de un pedido "Pendiente"
+  Given que soy un cliente autenticado
+  And tengo un pedido "ORD-123" en estado "Pendiente"
+  When accedo al detalle del pedido
+  Then veo un botón "Solicitar cancelación"
+  When hago click en el botón
+  And ingreso el motivo "Error en la dirección"
+  And confirmo la solicitud
+  Then el estado del pedido cambia a "Cancelación Solicitada"
+  And se registra el motivo en el historial del pedido
+  And el administrador recibe una notificación (sistema/email)
 
-  | Métrica | Valor |
-  |---------|-------|
-  | Test Files Failed | 10 |
-  | Tests Failed | 73 |
-  | Tests Passed | 561 |
-  | Tests Skipped | 11 |
-  | **Tasa de Éxito** | **86.9%** |
+Scenario: Intentar cancelar un pedido ya enviado
+  Given que mi pedido "ORD-123" está en estado "Enviado"
+  When accedo al detalle del pedido
+  Then NO veo el botón "Solicitar cancelación"
+  And veo un mensaje "Este pedido ya no puede ser cancelado. Por favor, contacta con soporte para devoluciones."
+```
 
-  ### Impacto
+### Tareas técnicas
 
-  - CI/CD muestra warnings en cada build
-  - Nuevos desarrolladores pueden confundirse con tests rotos
-  - Dificulta identificar regresiones reales
-  - Métricas de cobertura no son confiables
+- [ ] [REF-01] Añadir estado `CANCELLATION_REQUESTED` al enum de pedidos
+- [ ] [REF-02] Añadir campo `cancellationReason` (string) al modelo Order
+- [ ] [REF-03] Implementar endpoint POST `/api/orders/:id/request-cancellation`
+- [ ] [REF-04] Validar que solo el dueño del pedido puede solicitar cancelación
+- [ ] [REF-05] Validar que el pedido esté en estado `PENDING` o `PROCESSING` para permitir cancelación
+- [ ] [REF-06] Tests: Usuario puede solicitar cancelación de sus pedidos
+- [ ] [REF-07] Tests: No se permite cancelar pedidos enviados
 
-  ### Criterios de Aceptación
+**Prioridad:** Alta  
+**Estimación:** 3-4 horas
 
-  ```gherkin
-  Scenario: Todos los tests pasan
-    Given ejecuto npm run test
-    Then 0 tests fallan
-    And la cobertura es >= 80%
+---
 
-  Scenario: Tests skipped son revisados
-    Given hay 11 tests skipped
-    When los reviso
-    Then los reactivo si son válidos
-    Or los elimino si son obsoletos
+## User Story 2: Gestión de cancelaciones (Admin)
 
-  Tareas
+**Como** administrador  
+**Quiero** revisar las solicitudes de cancelación y aprobarlas o rechazarlas  
+**Para** gestionar el stock y las devoluciones correctamente
 
-  - Ejecutar npm run test y documentar errores específicos
-  - Categorizar fallos (mocks desactualizados, cambios de API, snapshots)
-  - Reparar tests por archivo, empezando por los más críticos
-  - Revisar tests skipped y decidir su destino
-  - Verificar cobertura final >= 80%
-  - Configurar CI para fallar si hay tests rotos
+### Criterios de Aceptación
 
-  Notas
+```gherkin
+Feature: Aprobación de cancelaciones por el administrador
 
-  - Creado como resultado de priorizar features sobre tests en fase MVP
-  - No afecta usuarios finales actualmente
-  - Abordar antes de añadir nuevos features significativos
+Scenario: Aprobar cancelación y procesar reembolso
+  Given soy un administrador en el panel de Strapi
+  And hay una solicitud de cancelación para el pedido "ORD-123"
+  When apruebo la solicitud con el botón "Confirmar Cancelación y Reembolsar"
+  Then el estado del pedido cambia a "Reembolsado"
+  And se emite un reembolso automático en Stripe
+  And el stock de los productos se devuelve al inventario
+  And el cliente recibe un email de confirmación de reembolso
 
-  Estimación: 4-6 horas
-  Asignado: Por definir
+Scenario: Rechazar solicitud de cancelación
+  Given el administrador rechaza la solicitud de cancelación
+  When ingresa el motivo "El pedido ya ha sido procesado para envío"
+  Then el estado del pedido vuelve a su estado anterior (ej. "En preparación")
+  And el cliente recibe un email explicando por qué no se pudo cancelar
+```
 
-  ---
+### Tareas técnicas
+
+- [ ] [REF-08] Crear servicio `StripeService.refund(paymentIntentId)`
+- [ ] [REF-09] Implementar lógica de devolución de stock al cancelar
+- [ ] [REF-10] Configurar webhook de Stripe para confirmar reembolsos
+- [ ] [REF-11] Template de email: Confirmación de Reembolso
+- [ ] [REF-12] Template de email: Rechazo de Cancelación
+- [ ] [REF-13] Tests: El reembolso en Stripe se ejecuta correctamente
+- [ ] [REF-14] Tests: El stock se actualiza correctamente
+
+**Prioridad:** Alta  
+**Estimación:** 5-6 horas
+
+---
+
+## Notas Técnicas Adicionales
+
+### Flujo de Reembolso:
+1. Cliente solicita → Estado: `cancellation_requested`.
+2. Admin aprueba → Llamada a Stripe API `refunds.create({ payment_intent: ... })`.
+3. Éxito Stripe → Estado: `refunded`.
+4. Fallo Stripe → Estado: `manual_refund_required` (error logueado).
+
+### Dependencias:
+- Stripe Secret Key con permisos de escritura para Reembolsos.
+- Modelo de datos StatusHistory (implementado en EPIC 15).
+
+---
+
+## Métricas de Éxito
+- ✅ Tiempo de procesamiento de cancelación < 24h.
+- ✅ 100% de reembolsos aprobados procesados automáticamente en Stripe.
+- ✅ Tasa de error en reembolsos < 1%.
