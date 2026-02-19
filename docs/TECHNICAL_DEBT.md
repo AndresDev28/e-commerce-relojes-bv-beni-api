@@ -165,6 +165,35 @@ Last updated: 2026-02-19
 
 ---
 
+## Post-MVP Improvements
+
+### 8. Email Webhook Rollback (ORD-36)
+
+**Status:** Not implemented
+
+**Description:** If the email webhook fails, the order status has already changed. This creates an inconsistency where the customer doesn't receive notification of their order status change.
+
+**Current Behavior:**
+- Order status changes in database
+- Webhook called to frontend
+- If webhook fails, status remains changed but no email sent
+- Status history records the change regardless
+
+**Impact:** 
+- Customer may not be notified of status changes
+- Admin sees log of failed webhook but must manually resend
+- No automatic recovery mechanism
+
+**Recommended Actions:**
+- [ ] Implement webhook retry with exponential backoff (3 retries)
+- [ ] Store webhook status in order (pending/sent/failed)
+- [ ] Add admin UI to manually resend failed notifications
+- [ ] Consider implementing saga pattern for eventual consistency
+
+**Estimated Effort:** 4-6 hours
+
+---
+
 ## Test Infrastructure Improvements
 
 ### Test Helper Coverage
@@ -221,9 +250,14 @@ Last updated: 2026-02-19
 | Issue ID | Description | Status |
 |----------|-------------|--------|
 | ORD-31 | Order search filters tests | Partial (sanity check only) |
-| ORD-32 | Status transition validation tests | Complete |
-| ORD-33 | Order status history tests | Complete |
-| ORD-34 | Status change notes tests | Complete |
+| ORD-32 | Status transition validation | Complete |
+| ORD-33 | Order status history | Complete |
+| ORD-34 | Status change notes | Complete |
+| ORD-35 | Email on status change | Complete (via ORD-22 webhook) |
+| ORD-36 | Rollback on email failure | Pending (Post-MVP) |
+| ORD-37 | Tests: Transition validation | Complete |
+| ORD-38 | Tests: Status history | Complete |
+| ORD-39 | Tests: No backward transitions | Complete |
 
 ---
 
@@ -232,3 +266,5 @@ Last updated: 2026-02-19
 | Date | Change | Author |
 |------|--------|--------|
 | 2026-02-19 | Initial document creation after ORD-34 implementation | - |
+| 2026-02-19 | Added ORD-36 (email rollback) as Post-MVP improvement | - |
+| 2026-02-19 | Updated related issues table with ORD-35 to ORD-39 status | - |

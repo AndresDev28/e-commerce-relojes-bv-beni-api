@@ -607,14 +607,14 @@ Scenario: Añadir nota al cambiar estado
 
 ### Tareas técnicas
 
-- [ ] [ORD-32] Implementar lógica de validación de transiciones
-- [ ] [ORD-33] Crear tabla de historial de cambios (audit log)
-- [ ] [ORD-34] Añadir campo de notas al cambiar estado
-- [ ] [ORD-35] Hook lifecycle: Enviar email al guardar
-- [ ] [ORD-36] Implementar rollback si falla el email
-- [ ] [ORD-37] Tests: Validación de transiciones funciona
-- [ ] [ORD-38] Tests: Historial se registra correctamente
-- [ ] [ORD-39] Tests: No se puede retroceder estados
+- [x] [ORD-32] Implementar lógica de validación de transiciones
+- [x] [ORD-33] Crear tabla de historial de cambios (audit log)
+- [x] [ORD-34] Añadir campo de notas al cambiar estado
+- [x] [ORD-35] Hook lifecycle: Enviar email al guardar (implementado via ORD-22 webhook)
+- [ ] [ORD-36] Implementar rollback si falla el email (Post-MVP)
+- [x] [ORD-37] Tests: Validación de transiciones funciona
+- [x] [ORD-38] Tests: Historial se registra correctamente
+- [x] [ORD-39] Tests: No se puede retroceder estados
 
 **Prioridad:** Alta  
 **Estimación:** 5-6 horas
