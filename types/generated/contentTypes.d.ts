@@ -498,6 +498,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
         'delivered',
         'cancelled',
         'refunded',
+        'cancellation_requested',
       ]
     > &
       Schema.Attribute.Required &
@@ -507,6 +508,10 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     publishedAt: Schema.Attribute.DateTime;
     shippedAt: Schema.Attribute.Date;
     shipping: Schema.Attribute.Decimal & Schema.Attribute.Required;
+    statusChangeNote: Schema.Attribute.String &
+      Schema.Attribute.SetMinMaxLength<{
+        maxLength: 5000;
+      }>;
     subtotal: Schema.Attribute.Decimal & Schema.Attribute.Required;
     total: Schema.Attribute.Decimal & Schema.Attribute.Required;
     updatedAt: Schema.Attribute.DateTime;

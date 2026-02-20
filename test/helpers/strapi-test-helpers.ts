@@ -198,15 +198,15 @@ export async function setupStrapi() {
       console.log('✅ Strapi initialized successfully')
       console.log(`🌐 Server running on http://${TEST_ENV_VARS.HOST}:${TEST_ENV_VARS.PORT}`);
 
-        // [ORD-25] Silence expected security logs during testing
-        // This prevents "unhandled error" confusion in test output
-        (strapi.log as any).warn = (message: any) => {
-          // Optional: only silence specific security messages if needed
-          // if (typeof message === 'string' && message.includes('[ORD-25]')) return;
+      // [ORD-25] Silence expected security logs during testing
+      // This prevents "unhandled error" confusion in test output
+      (strapi.log as any).warn = (message: any) => {
+        // Optional: only silence specific security messages if needed
+        // if (typeof message === 'string' && message.includes('[ORD-25]')) return;
 
-          // For now, satisfy the requirement to remove "unhandled errors" noise
-          // strictly for the test environment.
-        };
+        // For now, satisfy the requirement to remove "unhandled errors" noise
+        // strictly for the test environment.
+      };
 
       // Also silence info logs to keep test output clean
       (strapi.log as any).info = () => { };
@@ -552,7 +552,7 @@ export async function createTestOrder(data?: {
   subtotal?: number
   shipping?: number
   total?: number
-  orderStatus?: 'pending' | 'paid' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded'
+  orderStatus?: 'pending' | 'paid' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded' | 'cancellation_requested'
 }, userId?: number | string) {
   const strapi = getStrapi()
 
@@ -570,7 +570,7 @@ export async function createTestOrder(data?: {
         subtotal: data?.subtotal || 99.99,
         shipping: data?.shipping || 10.00,
         total: data?.total || 109.99,
-        orderStatus: (data?.orderStatus || 'pending') as 'pending' | 'paid' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded',
+        orderStatus: (data?.orderStatus || 'pending') as 'pending' | 'paid' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded' | 'cancellation_requested',
         user: { connect: [userId] } as any, // 3. Conectar usuario (sintaxis Strapi v5)
         publishedAt: new Date().toISOString(),
       },
