@@ -6,7 +6,7 @@
  * It ensures that orders follow the correct lifecycle and prevents invalid state changes.
  */
 
-export type OrderStatus = 
+export type OrderStatus =
   | 'pending'
   | 'paid'
   | 'processing'
@@ -14,6 +14,7 @@ export type OrderStatus =
   | 'delivered'
   | 'cancelled'
   | 'refunded'
+  | 'cancellation_requested'
 
 /**
  * Valid status transitions for each order status.
@@ -22,18 +23,20 @@ export type OrderStatus =
  * - Normal flow: pending → paid → processing → shipped → delivered
  * - Terminal states: delivered, cancelled, refunded cannot be changed
  * - Cancellation/refund: Can transition to cancelled/refunded from any active state
+ * - Cancellation request: Customer can request cancellation from pending, paid, or processing
  *
- * Active states: pending, paid, processing, shipped
+ * Active states: pending, paid, processing, shipped, cancellation_requested
  * Terminal states: delivered, cancelled, refunded
  */
 const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  pending: ['paid', 'cancelled', 'refunded'],
-  paid: ['processing', 'cancelled', 'refunded'],
-  processing: ['shipped', 'cancelled', 'refunded'],
+  pending: ['paid', 'cancelled', 'refunded', 'cancellation_requested'],
+  paid: ['processing', 'cancelled', 'refunded', 'cancellation_requested'],
+  processing: ['shipped', 'cancelled', 'refunded', 'cancellation_requested'],
+  cancellation_requested: ['cancelled', 'refunded', 'processing'],
   shipped: ['delivered', 'cancelled', 'refunded'],
-  delivered: [], 
-  cancelled: [], 
-  refunded: [], 
+  delivered: [],
+  cancelled: [],
+  refunded: [],
 }
 
 /**

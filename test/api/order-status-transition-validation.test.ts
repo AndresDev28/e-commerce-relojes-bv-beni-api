@@ -289,6 +289,84 @@ describe('[ORD-32] Order Status Transition Validation', () => {
     })
   })
 
+  describe('Valid Transitions - Cancellation Requests', () => {
+    it('[VT-13] should allow transition from pending to cancellation_requested', async () => {
+      console.log('\n🎯 [VT-13] Testing: pending → cancellation_requested')
+
+      const order = await createTestOrder({
+        orderStatus: 'pending' as const,
+        items: [{ productId: 1, name: 'Reloj Test', price: 199.99, quantity: 1 }],
+        subtotal: 199.99,
+        shipping: 10,
+        total: 209.99
+      }, testUser.id)
+
+      const updatedOrder = await strapi.entityService.update('api::order.order', order.id, {
+        data: { orderStatus: 'cancellation_requested' }
+      })
+
+      expect(updatedOrder.orderStatus).toBe('cancellation_requested')
+      console.log('✅ [VT-13] PASSED')
+    })
+
+    it('[VT-14] should allow transition from paid to cancellation_requested', async () => {
+      console.log('\n🎯 [VT-14] Testing: paid → cancellation_requested')
+
+      const order = await createTestOrder({
+        orderStatus: 'paid' as const,
+        items: [{ productId: 1, name: 'Reloj Test', price: 199.99, quantity: 1 }],
+        subtotal: 199.99,
+        shipping: 10,
+        total: 209.99
+      }, testUser.id)
+
+      const updatedOrder = await strapi.entityService.update('api::order.order', order.id, {
+        data: { orderStatus: 'cancellation_requested' }
+      })
+
+      expect(updatedOrder.orderStatus).toBe('cancellation_requested')
+      console.log('✅ [VT-14] PASSED')
+    })
+
+    it('[VT-15] should allow transition from cancellation_requested to refunded', async () => {
+      console.log('\n🎯 [VT-15] Testing: cancellation_requested → refunded')
+
+      const order = await createTestOrder({
+        orderStatus: 'cancellation_requested' as const,
+        items: [{ productId: 1, name: 'Reloj Test', price: 199.99, quantity: 1 }],
+        subtotal: 199.99,
+        shipping: 10,
+        total: 209.99
+      }, testUser.id)
+
+      const updatedOrder = await strapi.entityService.update('api::order.order', order.id, {
+        data: { orderStatus: 'refunded' }
+      })
+
+      expect(updatedOrder.orderStatus).toBe('refunded')
+      console.log('✅ [VT-15] PASSED')
+    })
+
+    it('[VT-16] should allow transition from cancellation_requested to processing (reject cancellation)', async () => {
+      console.log('\n🎯 [VT-16] Testing: cancellation_requested → processing')
+
+      const order = await createTestOrder({
+        orderStatus: 'cancellation_requested' as const,
+        items: [{ productId: 1, name: 'Reloj Test', price: 199.99, quantity: 1 }],
+        subtotal: 199.99,
+        shipping: 10,
+        total: 209.99
+      }, testUser.id)
+
+      const updatedOrder = await strapi.entityService.update('api::order.order', order.id, {
+        data: { orderStatus: 'processing' }
+      })
+
+      expect(updatedOrder.orderStatus).toBe('processing')
+      console.log('✅ [VT-16] PASSED')
+    })
+  })
+
   describe('Invalid Transitions - Backward Transitions', () => {
     it('[IT-1] should reject transition from delivered to shipped (backward)', async () => {
       console.log('\n🎯 [IT-1] Testing: delivered → shipped (INVALID)')
@@ -570,6 +648,31 @@ describe('[ORD-32] Order Status Transition Validation', () => {
       expect(unchangedOrder.orderStatus).toBe('refunded')
       console.log('✅ [IT-11] PASSED: refunded → cancelled rejected')
     })
+
+    it('[IT-12] should reject transition from shipped to cancellation_requested', async () => {
+      console.log('\n🎯 [IT-12] Testing: shipped → cancellation_requested (INVALID)')
+
+      const order = await createTestOrder({
+        orderStatus: 'shipped' as const,
+        items: [{ productId: 1, name: 'Reloj Test', price: 199.99, quantity: 1 }],
+        subtotal: 199.99,
+        shipping: 10,
+        total: 209.99
+      }, testUser.id)
+
+      await expect(
+        strapi.entityService.update('api::order.order', order.id, {
+          data: { orderStatus: 'cancellation_requested' }
+        })
+      ).rejects.toThrow('Invalid status transition')
+
+      const unchangedOrder = await strapi.entityService.findOne('api::order.order', order.id, {
+        fields: ['orderStatus']
+      })
+
+      expect(unchangedOrder.orderStatus).toBe('shipped')
+      console.log('✅ [IT-12] PASSED')
+    })
   })
 
   describe('Edge Cases', () => {
@@ -585,7 +688,7 @@ describe('[ORD-32] Order Status Transition Validation', () => {
       }, testUser.id)
 
       const updatedOrder = await strapi.entityService.update('api::order.order', order.id, {
-        data: { 
+        data: {
           total: 219.99,
           shipping: 20
         }
