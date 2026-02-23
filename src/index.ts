@@ -7,7 +7,7 @@ export default {
    *
    * This gives you an opportunity to extend code.
    */
-  register(/* { strapi }: { strapi: Core.Strapi } */) {},
+  register(/* { strapi }: { strapi: Core.Strapi } */) { },
 
   /**
    * An asynchronous bootstrap function that runs before
@@ -35,6 +35,7 @@ export default {
         { action: 'api::order.order.find', enabled: true },
         { action: 'api::order.order.findOne', enabled: true },
         { action: 'api::order.order.create', enabled: true },
+        { action: 'api::order.order.update', enabled: true },
       ];
 
       for (const perm of orderPermissions) {

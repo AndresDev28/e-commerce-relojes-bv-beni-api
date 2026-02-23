@@ -136,8 +136,7 @@ export default {
     if (statusChangeNote !== undefined) {
       event.state.statusChangeNote = statusChangeNote || null
       strapi.log.debug(`[ORD-34] beforeUpdate: Captured statusChangeNote = "${statusChangeNote}"`);
-      // Remove from data so it doesn't persist in Order entity
-      delete data.statusChangeNote
+      // The note will also be saved in the Order entity so the admin can see it directly
     }
 
     strapi.log.debug(`[ORD-22] beforeUpdate: Stored previous status = ${currentStatus}`);
