@@ -570,7 +570,7 @@ export async function createTestOrder(data?: {
         subtotal: data?.subtotal || 99.99,
         shipping: data?.shipping || 10.00,
         total: data?.total || 109.99,
-        orderStatus: (data?.orderStatus || 'pending') as 'pending' | 'paid' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded' | 'cancellation_requested',
+        orderStatus: data?.orderStatus || 'pending',
         user: { connect: [userId] } as any, // 3. Conectar usuario (sintaxis Strapi v5)
         publishedAt: new Date().toISOString(),
       },

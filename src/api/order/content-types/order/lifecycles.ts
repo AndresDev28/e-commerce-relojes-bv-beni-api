@@ -136,8 +136,7 @@ export default {
     if (statusChangeNote !== undefined) {
       event.state.statusChangeNote = statusChangeNote || null
       strapi.log.debug(`[ORD-34] beforeUpdate: Captured statusChangeNote = "${statusChangeNote}"`);
-      // Remove from data so it doesn't persist in Order entity
-      delete data.statusChangeNote
+      // The note will also be saved in the Order entity so the admin can see it directly
     }
 
     strapi.log.debug(`[ORD-22] beforeUpdate: Stored previous status = ${currentStatus}`);
@@ -246,16 +245,68 @@ export default {
       })
 
       // 8. Handle response
-      const responseData = await response.json()
-
-      if (response.ok) {
-        strapi.log.info(`[ORD-22] ✅ Email sent successfully for order ${result.orderId}`)
-      } else {
-        strapi.log.error(`[ORD-22] ❌ Email sending failed for order ${result.orderId}:`, {
-          status: response.status,
-          error: responseData,
-        })
+      try {
+        const responseData = await response.json()
+        if (response.ok) {
+          strapi.log.info(`[ORD-22] ✅ Email sent successfully for order ${result.orderId}`)
+        } else {
+          strapi.log.error(`[ORD-22] ❌ Email sending failed for order ${result.orderId}:`, {
+            status: response.status,
+            error: responseData,
+          })
+        }
+      } catch (webhookError) {
+        strapi.log.error(`[ORD-22] ❌ Webhook call failed:`, webhookError)
       }
+
+      // 9. [REF-08] Trigger Refund if status changed to 'refunded'
+      if (newStatus === 'refunded') {
+        try {
+          // Both WEBHOOK_SECRET (used in email for historical reasons) and STRAPI_WEBHOOK_SECRET are needed.
+          // Since both front/back ends share env concepts, we reuse WEBHOOK_SECRET or fallback to a dedicated one if configured.
+          const frontendUrl = process.env.FRONTEND_URL
+          const refundSecret = process.env.STRAPI_WEBHOOK_SECRET || process.env.WEBHOOK_SECRET
+
+          if (!frontendUrl || !refundSecret) {
+            strapi.log.error('[REF-08] Missing FRONTEND_URL or STRAPI_WEBHOOK_SECRET to process refund')
+          } else if (!result.paymentIntentId || !result.total) {
+            strapi.log.error(`[REF-08] Order ${result.orderId} missing paymentIntentId or total for refund`)
+          } else {
+            const refundUrl = `${frontendUrl}/api/refund-order`
+            strapi.log.info(`[REF-08] Triggering refund for order ${result.orderId} via ${refundUrl}`)
+
+            // amount must be in euros (or native currency), the frontend converts to cents
+            const refundPayload = {
+              paymentIntentId: result.paymentIntentId,
+              amount: parseFloat(result.total),
+              orderId: result.orderId
+            }
+
+            const refundResponse = await fetch(refundUrl, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-strapi-secret': refundSecret,
+              },
+              body: JSON.stringify(refundPayload),
+            })
+
+            const refundData = await refundResponse.json()
+
+            if (refundResponse.ok) {
+              strapi.log.info(`[REF-08] ✅ Refund processed successfully for order ${result.orderId}`)
+            } else {
+              strapi.log.error(`[REF-08] ❌ Refund failed for order ${result.orderId}:`, {
+                status: refundResponse.status,
+                error: refundData,
+              })
+            }
+          }
+        } catch (refundError) {
+          strapi.log.error(`[REF-08] ❌ Refund webhook call failed:`, refundError)
+        }
+      }
+
     } catch (error) {
       // Error handling - NEVER throw, just log
       strapi.log.error(`[ORD-22/33] Exception in afterUpdate hook:`, {

@@ -203,11 +203,55 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
    * PUT /api/orders/:id
    *
    * [ORD-34] Validates statusChangeNote field before updating.
-   * - Must be a string if provided
-   * - Must not exceed 5000 characters
+   * [SEC-01] Validates user ownership and allowed fields for updates.
    */
   async update(ctx) {
     const { id } = ctx.params
+    const userId = ctx.state.user?.id
+
+    if (!userId) {
+      return ctx.unauthorized('You must be logged in to update an order')
+    }
+
+    let order: any
+    try {
+      order = await strapi.documents('api::order.order').findOne({
+        documentId: id,
+        populate: ['user'],
+      })
+    } catch (error) {
+      strapi.log.warn(`[SEC-01] Error finding order ${id} for update:`, error)
+      return ctx.notFound('Order not found')
+    }
+
+    if (!order) {
+      return ctx.notFound('Order not found')
+    }
+
+    const userRole = await getUserRole(userId, strapi)
+    const isAdministrator = userRole === 'administrator'
+
+    if (!isAdministrator) {
+      if (order.user?.documentId !== ctx.state.user.documentId && order.user?.id !== userId) {
+        strapi.log.warn(`[SEC-01] User ${userId} attempted to modify unauthorized order: ${id}`)
+        return ctx.forbidden('You can only update your own orders')
+      }
+
+      const updateData = ctx.request.body?.data || {}
+      const allowedFields = ['orderStatus', 'statusChangeNote']
+      const providedFields = Object.keys(updateData)
+
+      const isUpdatingRestrictedFields = providedFields.some(field => !allowedFields.includes(field))
+
+      if (isUpdatingRestrictedFields) {
+        return ctx.badRequest('You are only allowed to update orderStatus and statusChangeNote')
+      }
+
+      if (updateData.orderStatus && updateData.orderStatus !== 'cancellation_requested') {
+        return ctx.badRequest('You can only request order cancellation')
+      }
+    }
+
     const statusChangeNote = ctx.request.body?.data?.statusChangeNote
 
     if (statusChangeNote !== undefined && statusChangeNote !== null) {
