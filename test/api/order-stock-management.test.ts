@@ -215,4 +215,48 @@ describe('Order Stock Management ([REF-09])', () => {
         // Stock should still be 6
         expect((await strapi.entityService.findOne('api::product.product', product.id)).stock).toBe(6)
     })
+
+    it('should reject order creation if stock is insufficient ([AND-99])', async () => {
+        const strapi = getStrapi()
+
+        // 1. Create product with limited stock
+        const product = await createTestProduct({
+            name: 'Reloj Escaso',
+            price: 1000,
+            stock: 2
+        })
+
+        // 2. Authenticate
+        await createTestUser({
+            username: 'greedy_buyer',
+            email: 'greedy@test.com',
+            password: 'password123'
+        })
+        const auth = await authenticateUser('greedy@test.com', 'password123')
+
+        // 3. Attempt to buy 3 (more than 2 available)
+        const response = await request(strapi.server.httpServer)
+            .post('/api/orders')
+            .set('Authorization', `Bearer ${auth.jwt}`)
+            .send({
+                data: {
+                    orderId: `GREEDY-${Date.now()}`,
+                    items: [
+                        { id: product.id, quantity: 3 }
+                    ],
+                    subtotal: 3000,
+                    shipping: 0,
+                    total: 3000,
+                    orderStatus: 'paid'
+                }
+            })
+            // Expect 400 Bad Request because of the error thrown in beforeCreate
+            .expect(400)
+
+        expect(response.body.error.message).toContain('Insufficient stock')
+
+        // 4. Verify stock remains unchanged
+        const finalProduct = await strapi.entityService.findOne('api::product.product', product.id)
+        expect(finalProduct.stock).toBe(2)
+    })
 })
