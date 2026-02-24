@@ -19,6 +19,7 @@
  */
 
 import { factories } from '@strapi/strapi'
+import Stripe from 'stripe'
 
 /**
  * Helper function to get user role type
@@ -270,4 +271,85 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
 
     return super.update(ctx)
   },
+
+  /**
+   * POST /api/orders/stripe-webhook
+   *
+   * [REF-10] Handles Stripe's charge.refunded webhooks
+   */
+  async stripeWebhook(ctx) {
+    const signature = ctx.request.headers['stripe-signature'];
+    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
+
+    if (!endpointSecret) {
+      strapi.log.error('[REF-10] STRIPE_WEBHOOK_SECRET is not configured');
+      return ctx.internalServerError('Webhook secret not configured');
+    }
+
+    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
+      apiVersion: '2026-01-28.clover' as any,
+    });
+
+    let event: Stripe.Event;
+
+    try {
+      const unparsedBody = ctx.request.body[Symbol.for('unparsedBody')] || ctx.request.body;
+
+      if (!unparsedBody) {
+        strapi.log.error('[REF-10] No unparsed body available for Stripe webhook');
+        return ctx.badRequest('Missing raw body');
+      }
+
+      event = stripe.webhooks.constructEvent(unparsedBody, signature, endpointSecret);
+    } catch (err: any) {
+      strapi.log.error(`[REF-10] Webhook signature verification failed: ${err.message}`);
+      return ctx.badRequest(`Webhook signature verification failed.`);
+    }
+
+    strapi.log.info(`[REF-10] Stripe webhook received: ${event.type}`);
+
+    if (event.type === 'charge.refunded') {
+      const charge = event.data.object as Stripe.Charge;
+      const paymentIntentId = typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id;
+
+      if (!paymentIntentId) {
+        strapi.log.warn('[REF-10] charge.refunded received without a payment_intent ID');
+        return ctx.send({ received: true });
+      }
+
+      try {
+        const orders = await strapi.entityService.findMany('api::order.order', {
+          filters: { paymentIntentId: paymentIntentId },
+        }) as any[];
+
+        if (!orders || orders.length === 0) {
+          strapi.log.warn(`[REF-10] Webhook: No order found for paymentIntent ${paymentIntentId}`);
+          return ctx.send({ received: true });
+        }
+
+        const order = orders[0];
+
+        if (order.orderStatus === 'refunded') {
+          strapi.log.info(`[REF-10] Webhook: Order ${order.orderId} is already refunded. Ignoring.`);
+          return ctx.send({ received: true });
+        }
+
+        await strapi.entityService.update('api::order.order', order.id, {
+          data: {
+            orderStatus: 'refunded',
+            statusChangeNote: 'Automated refund confirmation via Stripe webhook',
+          },
+        });
+
+        strapi.log.info(`[REF-10] Webhook: Order ${order.orderId} successfully marked as refunded.`);
+      } catch (error) {
+        strapi.log.error(`[REF-10] Webhook: Error processing charge.refunded for payment intent ${paymentIntentId}:`, error);
+        return ctx.internalServerError('Error processing webhook event');
+      }
+    } else {
+      strapi.log.debug(`[REF-10] Unhandled webhook event type: ${event.type}`);
+    }
+
+    return ctx.send({ received: true });
+  }
 }));
