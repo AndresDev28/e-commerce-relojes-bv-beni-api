@@ -9,6 +9,9 @@
  */
 
 import { validateOrderTransition } from '../../helpers/validate-order-transition'
+import { errors } from '@strapi/utils';
+
+const { ApplicationError } = errors;
 
 /**
  * Helper function to create status history entry
@@ -100,6 +103,31 @@ export default {
       strapi.log.info('Order lifecycle: User already assigned in payload (programmatic creation)')
     } else {
       strapi.log.warn('Order lifecycle: No authenticated user found in request context or payload')
+    }
+
+    // [AND-99] Validate stock before creating the order
+    if (data.items && Array.isArray(data.items)) {
+      for (const item of data.items) {
+        // Ensure we handle both numeric IDs and string IDs (documentId) correctly
+        const numericId = typeof item.id === 'string' && !isNaN(Number(item.id)) ? Number(item.id) : item.id;
+
+        if (!numericId || !item.quantity) continue;
+
+        const product = await strapi.entityService.findOne('api::product.product', numericId, {
+          fields: ['stock', 'name']
+        });
+
+        if (!product) {
+          strapi.log.error(`[AND-99] Product ${item.id} not found during pre-creation stock validation`);
+          continue; // Or throw error? Throwing is safer.
+        }
+
+        const availableStock = product.stock || 0;
+        if (availableStock < item.quantity) {
+          strapi.log.warn(`[AND-99] Order rejected: Insufficient stock for "${product.name}" (Requested: ${item.quantity}, Available: ${availableStock})`);
+          throw new ApplicationError(`Insufficient stock for "${product.name}". Available: ${availableStock}, Requested: ${item.quantity}`);
+        }
+      }
     }
   },
 
