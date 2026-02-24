@@ -47,6 +47,38 @@ async function createStatusHistoryEntry(
   }
 }
 
+/**
+ * Helper function to update product stock
+ * [REF-09] Atomic stock management
+ */
+async function updateProductStock(strapi: any, productId: number | string, quantityChange: number) {
+  try {
+    // Ensure we handle both numeric IDs and string IDs (documentId) correctly
+    // If it's a numeric string, convert to number
+    const numericId = typeof productId === 'string' && !isNaN(Number(productId)) ? Number(productId) : productId;
+
+    const product = await strapi.entityService.findOne('api::product.product', numericId, {
+      fields: ['stock', 'name']
+    });
+
+    if (!product) {
+      strapi.log.error(`[REF-09] Product ${productId} not found for stock update`);
+      return;
+    }
+
+    const currentStock = product.stock || 0;
+    const newStock = currentStock + quantityChange;
+
+    await strapi.entityService.update('api::product.product', product.id, {
+      data: { stock: Math.max(0, newStock) }
+    });
+
+    strapi.log.info(`[REF-09] Stock updated for "${product.name}" (${product.id}): ${currentStock} → ${newStock}`);
+  } catch (error) {
+    strapi.log.error(`[REF-09] Failed to update stock for product ${productId}:`, error.message);
+  }
+}
+
 export default {
   async beforeCreate(event) {
     const { data } = event.params
@@ -74,12 +106,13 @@ export default {
   /**
    * afterCreate hook
    * [ORD-33] Create initial status history entry when order is created
+   * [REF-09] Decrement product stock
    */
   async afterCreate(event) {
     const { result } = event
 
     try {
-      // Get request context to access authenticated user
+      // 1. [ORD-33] Get request context to access authenticated user
       const ctx = strapi.requestContext.get();
       const changedByEmail = ctx?.state?.user?.email || 'system@example.com'
 
@@ -91,8 +124,21 @@ export default {
         result.orderStatus,
         changedByEmail
       )
+
+      // 2. [REF-09] Decrement stock for each item in the order
+      // We only decrement if the order is NOT already cancelled (e.g., failed immediately)
+      if (result.orderStatus !== 'cancelled' && result.items && Array.isArray(result.items)) {
+        strapi.log.info(`[REF-09] Order ${result.orderId} created: Decrementing stock for ${result.items.length} items`);
+
+        for (const item of result.items) {
+          if (item.id && item.quantity) {
+            // quantity is positive, so quantityChange is -item.quantity
+            await updateProductStock(strapi, item.id, -item.quantity);
+          }
+        }
+      }
     } catch (error) {
-      strapi.log.error(`[ORD-33] Exception in afterCreate hook:`, {
+      strapi.log.error(`[ORD-33/REF-09] Exception in afterCreate hook:`, {
         orderId: result?.id,
         error: error.message,
       })
@@ -146,6 +192,7 @@ export default {
        * [ORD-22] Sends email notification when order status changes
        * [ORD-33] Creates status history entry for audit purposes
        * [ORD-34] Passes statusChangeNote to history and webhook
+       * [REF-09] Restores stock if order is cancelled or refunded
        */
   async afterUpdate(event) {
     const { result } = event
@@ -181,14 +228,32 @@ export default {
         statusChangeNote
       )
 
-      // 4. [ORD-22] Check if email notifications are enabled
+      // 4. [REF-09] Restore stock if status changed to 'cancelled' or 'refunded'
+      const refundTargetStatuses = ['cancelled', 'refunded'];
+      const isNowRefunded = refundTargetStatuses.includes(newStatus);
+      const wasAlreadyRefunded = refundTargetStatuses.includes(previousStatus);
+
+      if (isNowRefunded && !wasAlreadyRefunded) {
+        strapi.log.info(`[REF-09] Order ${result.orderId} status changed to ${newStatus}: Restoring stock`);
+
+        if (result.items && Array.isArray(result.items)) {
+          for (const item of result.items) {
+            if (item.id && item.quantity) {
+              // quantity is positive, so quantityChange is item.quantity (positive)
+              await updateProductStock(strapi, item.id, item.quantity);
+            }
+          }
+        }
+      }
+
+      // 5. [ORD-22] Check if email notifications are enabled
       const emailNotificationsDisabled = process.env.DISABLE_EMAIL_NOTIFICATIONS === 'true'
       if (emailNotificationsDisabled) {
         strapi.log.info('[ORD-22] Email notification disabled via env var')
         return
       }
 
-      // 5. Get user mail
+      // 6. Get user mail
       // Important: Need to populate user relation to get email
       const order: any = await strapi.entityService.findOne('api::order.order', result.id, {
         populate: ['user'],
@@ -204,7 +269,7 @@ export default {
 
       strapi.log.info(`[ORD-22] Order ${result.orderId}: Sending email to ${customerEmail}`)
 
-      // 6. Prepare webhook payload
+      // 7. Prepare webhook payload
       const payload = {
         orderId: result.orderId,
         customerEmail,
@@ -222,7 +287,7 @@ export default {
 
       strapi.log.debug(`[ORD-22] Payload prepared:`, { orderId: result.orderId, status: newStatus })
 
-      // 7. Call Next.js webhook
+      // 8. Call Next.js webhook
       const frontendUrl = process.env.FRONTEND_URL
       const webhookSecret = process.env.WEBHOOK_SECRET
 
@@ -244,7 +309,7 @@ export default {
         body: JSON.stringify(payload),
       })
 
-      // 8. Handle response
+      // 9. Handle response
       try {
         const responseData = await response.json()
         if (response.ok) {
@@ -259,7 +324,7 @@ export default {
         strapi.log.error(`[ORD-22] ❌ Webhook call failed:`, webhookError)
       }
 
-      // 9. [REF-08] Trigger Refund if status changed to 'refunded'
+      // 10. [REF-08] Trigger Refund if status changed to 'refunded'
       if (newStatus === 'refunded') {
         try {
           // Both WEBHOOK_SECRET (used in email for historical reasons) and STRAPI_WEBHOOK_SECRET are needed.
@@ -309,7 +374,7 @@ export default {
 
     } catch (error) {
       // Error handling - NEVER throw, just log
-      strapi.log.error(`[ORD-22/33] Exception in afterUpdate hook:`, {
+      strapi.log.error(`[ORD-22/33/REF-09] Exception in afterUpdate hook:`, {
         orderId: result?.orderId,
         error: error.message,
       })
