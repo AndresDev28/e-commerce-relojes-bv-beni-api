@@ -303,6 +303,7 @@ export default {
         customerEmail,
         customerName,
         orderStatus: newStatus,
+        previousOrderStatus: previousStatus, // [REF-12] Usado en frontend para detectar rechazos de cancelación
         statusChangeNote, // [ORD-34] Include note in webhook payload
         orderData: {
           items: result.items,

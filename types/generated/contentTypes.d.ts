@@ -474,11 +474,6 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     draftAndPublish: false;
   };
   attributes: {
-    cancellationDate: Schema.Attribute.DateTime;
-    cancellationReason: Schema.Attribute.String &
-      Schema.Attribute.SetMinMaxLength<{
-        maxLength: 1000;
-      }>;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
       Schema.Attribute.Private;
