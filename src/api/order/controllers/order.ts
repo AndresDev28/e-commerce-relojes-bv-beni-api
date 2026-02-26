@@ -273,6 +273,86 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
   },
 
   /**
+   * POST /api/orders/:id/request-cancellation
+   *
+   * [REF-03] Handles customer requests to cancel an order
+   * [REF-04] Validates that only the order owner can request cancellation
+   * [REF-05] Validates that order is in a valid state for cancellation
+   */
+  async requestCancellation(ctx) {
+    const { id } = ctx.params;
+    const userId = ctx.state.user?.id;
+
+    if (!userId) {
+      return ctx.unauthorized('You must be logged in to request an order cancellation');
+    }
+
+    const reason = ctx.request.body?.reason;
+    if (!reason || typeof reason !== 'string' || reason.trim() === '') {
+      strapi.log.warn(`[REF-03] Cancel request for order ${id} rejected: Invalid reason`);
+      return ctx.badRequest('A cancellation reason must be provided');
+    }
+
+    let order: any;
+    try {
+      order = await strapi.documents('api::order.order').findOne({
+        documentId: id,
+        populate: ['user'],
+      });
+    } catch (error) {
+      strapi.log.warn(`[REF-03] Error finding order ${id} for cancellation:`, error);
+      return ctx.notFound('Order not found');
+    }
+
+    if (!order) {
+      return ctx.notFound('Order not found');
+    }
+
+    const userRole = await getUserRole(userId, strapi);
+    const isAdministrator = userRole === 'administrator';
+
+    // [REF-04] Validate ownership
+    if (!isAdministrator && order.user?.documentId !== ctx.state.user.documentId && order.user?.id !== userId) {
+      strapi.log.warn(`[REF-04] User ${userId} attempted to cancel unauthorized order: ${id}`);
+      return ctx.forbidden('You can only cancel your own orders');
+    }
+
+    // [REF-05] Validate state
+    const currentStatus = order.orderStatus;
+    const allowedStatuses = ['pending', 'paid', 'processing'];
+
+    if (!allowedStatuses.includes(currentStatus)) {
+      strapi.log.warn(`[REF-05] Cancel request rejected for order ${id}: Invalid state ${currentStatus}`);
+      return ctx.badRequest(`Order cannot be cancelled in status: ${currentStatus}`);
+    }
+
+    // Process the cancellation request
+    strapi.log.info(`[REF-03] User ${userId} requested cancellation for order ${id}. Reason: "${reason.substring(0, 50)}..."`);
+
+    try {
+      const updatedOrder = await strapi.entityService.update('api::order.order', order.id, {
+        data: {
+          orderStatus: 'cancellation_requested',
+          cancellationReason: reason.substring(0, 1000), // Enforce max length
+          cancellationDate: new Date(),
+          statusChangeNote: `El cliente ha solicitado la cancelación del pedido. Motivo: ${reason}`,
+        },
+      });
+
+      return {
+        data: {
+          id: updatedOrder.documentId,
+          attributes: updatedOrder
+        },
+        meta: {}
+      };
+    } catch (error) {
+      strapi.log.error(`[REF-03] Error updating order ${id} for cancellation:`, error);
+      return ctx.internalServerError('An error occurred while processing the cancellation request');
+    }
+  },
+
+  /**
    * POST /api/orders/stripe-webhook
    *
    * [REF-10] Handles Stripe's charge.refunded webhooks

@@ -110,6 +110,7 @@ async function setupTestPermissions(strapi: Core.Strapi) {
       'api::order.order.find',
       'api::order.order.findOne',
       'api::order.order.create',
+      'api::order.order.requestCancellation',
     ]
 
     for (const action of orderPermissions) {
