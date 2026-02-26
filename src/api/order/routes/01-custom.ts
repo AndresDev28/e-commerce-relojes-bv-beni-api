@@ -10,6 +10,11 @@ export default {
             config: {
                 auth: false,
             },
+        },
+        {
+            method: 'POST',
+            path: '/orders/:id/request-cancellation',
+            handler: 'order.requestCancellation',
         }
     ]
 };
