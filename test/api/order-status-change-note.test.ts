@@ -64,7 +64,7 @@ describe('[ORD-34] Order Status Change Notes', () => {
       }, testUser.id)
 
       await strapi.entityService.update('api::order.order', order.id, {
-        data: { 
+        data: {
           orderStatus: 'paid',
           statusChangeNote: 'Payment confirmed via Stripe'
         }
@@ -125,7 +125,7 @@ describe('[ORD-34] Order Status Change Notes', () => {
       }, testUser.id)
 
       await strapi.entityService.update('api::order.order', order.id, {
-        data: { 
+        data: {
           orderStatus: 'shipped',
           statusChangeNote: 'Package dispatched with tracking #ABC123'
         }
@@ -168,7 +168,7 @@ describe('[ORD-34] Order Status Change Notes', () => {
       }, testUser.id)
 
       await strapi.entityService.update('api::order.order', order.id, {
-        data: { 
+        data: {
           orderStatus: 'paid',
           statusChangeNote: 'Customer paid via credit card'
         }
@@ -177,7 +177,7 @@ describe('[ORD-34] Order Status Change Notes', () => {
       if (mockFetch.mock.calls.length > 0) {
         const webhookCall = mockFetch.mock.calls[0]
         const webhookBody = JSON.parse(webhookCall[1].body)
-        
+
         expect(webhookBody.statusChangeNote).toBe('Customer paid via credit card')
       }
 
@@ -212,7 +212,7 @@ describe('[ORD-34] Order Status Change Notes', () => {
       if (mockFetch.mock.calls.length > 0) {
         const webhookCall = mockFetch.mock.calls[0]
         const webhookBody = JSON.parse(webhookCall[1].body)
-        
+
         expect(webhookBody.statusChangeNote).toBeNull()
       }
 
@@ -235,7 +235,7 @@ describe('[ORD-34] Order Status Change Notes', () => {
       const longNote = 'A'.repeat(5000)
 
       await strapi.entityService.update('api::order.order', order.id, {
-        data: { 
+        data: {
           orderStatus: 'paid',
           statusChangeNote: longNote
         }
@@ -264,7 +264,7 @@ describe('[ORD-34] Order Status Change Notes', () => {
       }, testUser.id)
 
       await strapi.entityService.update('api::order.order', order.id, {
-        data: { 
+        data: {
           orderStatus: 'paid',
           statusChangeNote: ''
         }
@@ -282,8 +282,8 @@ describe('[ORD-34] Order Status Change Notes', () => {
   })
 
   describe('Suite 4: Edge Cases', () => {
-    it('[NT-8] note should not persist on Order entity (transient field)', async () => {
-      console.log('\n🎯 [NT-8] Testing: Note is transient, not on Order entity')
+    it('[NT-8] note should persist on Order entity for admin visibility', async () => {
+      console.log('\n🎯 [NT-8] Testing: Note persists on Order entity')
 
       const order = await createTestOrder({
         orderStatus: 'pending' as const,
@@ -294,18 +294,18 @@ describe('[ORD-34] Order Status Change Notes', () => {
       }, testUser.id)
 
       const updatedOrder = await strapi.entityService.update('api::order.order', order.id, {
-        data: { 
+        data: {
           orderStatus: 'paid',
-          statusChangeNote: 'This note should not be on the order'
+          statusChangeNote: 'This note should be on the order'
         }
       })
 
-      expect([null, undefined]).toContain(updatedOrder.statusChangeNote)
+      expect(updatedOrder.statusChangeNote).toBe('This note should be on the order')
 
       const fetchedOrder = await strapi.entityService.findOne('api::order.order', order.id)
-      expect([null, undefined]).toContain(fetchedOrder.statusChangeNote)
+      expect(fetchedOrder.statusChangeNote).toBe('This note should be on the order')
 
-      console.log('✅ [NT-8] PASSED: Note does not persist on Order entity')
+      console.log('✅ [NT-8] PASSED: Note persists on Order entity')
     })
 
     it('[NT-9] should handle special characters in note', async () => {
@@ -322,7 +322,7 @@ describe('[ORD-34] Order Status Change Notes', () => {
       const specialNote = 'Order updated: "Special" chars <>&\'" émojis 🎉🚀\nNew line\tTab'
 
       await strapi.entityService.update('api::order.order', order.id, {
-        data: { 
+        data: {
           orderStatus: 'paid',
           statusChangeNote: specialNote
         }
