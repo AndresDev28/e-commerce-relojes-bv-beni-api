@@ -239,7 +239,7 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
       }
 
       const updateData = ctx.request.body?.data || {}
-      const allowedFields = ['orderStatus', 'statusChangeNote']
+      const allowedFields = ['orderStatus', 'statusChangeNote', 'cancellationReason', 'cancellationDate']
       const providedFields = Object.keys(updateData)
 
       const isUpdatingRestrictedFields = providedFields.some(field => !allowedFields.includes(field))
@@ -330,14 +330,24 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
     strapi.log.info(`[REF-03] User ${userId} requested cancellation for order ${id}. Reason: "${reason.substring(0, 50)}..."`);
 
     try {
-      const updatedOrder = await strapi.entityService.update('api::order.order', order.id, {
+      // Use db.query to bypass Strapi v5 content API sanitization
+      // which strips cancellationReason and cancellationDate from controller context
+      await strapi.db.query('api::order.order').update({
+        where: { id: order.id },
         data: {
           orderStatus: 'cancellation_requested',
-          cancellationReason: reason.substring(0, 1000), // Enforce max length
-          cancellationDate: new Date(),
+          cancellationReason: reason.substring(0, 1000),
+          cancellationDate: new Date().toISOString(),
           statusChangeNote: `El cliente ha solicitado la cancelación del pedido. Motivo: ${reason}`,
         },
       });
+
+      // Fetch the updated order to return in response
+      const updatedOrder = await strapi.documents('api::order.order').findOne({
+        documentId: order.documentId,
+      });
+
+      strapi.log.info(`[REF-03] ✅ Order ${id} updated to cancellation_requested. Reason saved: "${reason.substring(0, 50)}..."`);
 
       return {
         data: {
