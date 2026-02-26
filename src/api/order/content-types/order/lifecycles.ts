@@ -181,24 +181,50 @@ export default {
   async beforeUpdate(event) {
     const { where, data } = event.params;
 
-    // Get current order to compare status later
-    const existingOrder = await strapi.entityService.findOne('api::order.order', where.id, {
-      fields: ['orderStatus'],
-    });
+    strapi.log.info(`[ORD-32] beforeUpdate: where = ${JSON.stringify(where)}, data.orderStatus = ${data.orderStatus}`)
 
-    const currentStatus = existingOrder?.orderStatus
+    // Get current order to compare status later
+    // Strapi v5: admin panel may pass documentId instead of numeric id
+    let existingOrder: any = null;
+
+    try {
+      if (where.documentId) {
+        // Strapi v5 Document Service path (admin panel uses this)
+        const results = await strapi.documents('api::order.order').findFirst({
+          filters: { documentId: where.documentId },
+          fields: ['orderStatus', 'orderId'],
+        });
+        existingOrder = results;
+      } else if (where.id) {
+        // Legacy entityService path
+        existingOrder = await strapi.entityService.findOne('api::order.order', where.id, {
+          fields: ['orderStatus', 'orderId'],
+        });
+      }
+    } catch (findError) {
+      strapi.log.error(`[ORD-32] beforeUpdate: Error finding existing order:`, findError);
+    }
+
+    if (!existingOrder) {
+      strapi.log.warn(`[ORD-32] beforeUpdate: Could not find existing order with where = ${JSON.stringify(where)}. Skipping validation.`);
+      return;
+    }
+
+    const currentStatus = existingOrder.orderStatus
     const newStatus = data.orderStatus
+
+    strapi.log.info(`[ORD-32] beforeUpdate: Order ${existingOrder.orderId || where.id}: currentStatus = ${currentStatus}, newStatus = ${newStatus}`);
 
     // [ORD-32] Validate status transition if status is being changed
     if (newStatus && currentStatus && newStatus !== currentStatus) {
       const validation = validateOrderTransition(currentStatus, newStatus)
 
       if (!validation.valid) {
-        strapi.log.warn(`[ORD-32] Invalid status transition attempted: ${currentStatus} → ${newStatus} for order ${where.id}. Error: ${validation.error}`)
+        strapi.log.warn(`[ORD-32] Invalid status transition attempted: ${currentStatus} → ${newStatus} for order ${existingOrder.orderId}. Error: ${validation.error}`)
         throw new Error(validation.error)
       }
 
-      strapi.log.info(`[ORD-32] Valid status transition: ${currentStatus} → ${newStatus} for order ${where.id}`)
+      strapi.log.info(`[ORD-32] Valid status transition: ${currentStatus} → ${newStatus} for order ${existingOrder.orderId}`)
     }
 
     // Store previous status in event state for afterUpdate hook
@@ -213,7 +239,7 @@ export default {
       // The note will also be saved in the Order entity so the admin can see it directly
     }
 
-    strapi.log.debug(`[ORD-22] beforeUpdate: Stored previous status = ${currentStatus}`);
+    strapi.log.info(`[ORD-22] beforeUpdate: Stored previous status = ${currentStatus} for afterUpdate hook`);
   },
   /**
        * afterUpdate hook
@@ -231,6 +257,8 @@ export default {
       const newStatus = result.orderStatus
       // [ORD-34] Retrieve statusChangeNote captured in beforeUpdate
       const statusChangeNote = event.state?.statusChangeNote || null
+
+      strapi.log.info(`[ORD-22/33] afterUpdate: Order ${result.orderId} | previousStatus = ${previousStatus} | newStatus = ${newStatus} | hasState = ${!!event.state}`)
 
       if (previousStatus === newStatus) {
         strapi.log.debug(`[ORD-22/33] Order ${result.orderId}: orderStatus unchanged (${newStatus}), skipping history and email`);

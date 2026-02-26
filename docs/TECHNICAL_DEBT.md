@@ -2,7 +2,7 @@
 
 This document tracks areas of the codebase that require improvement, particularly around test coverage and code quality.
 
-Last updated: 2026-02-19
+Last updated: 2026-02-26
 
 ## Test Coverage Gaps
 
@@ -194,6 +194,31 @@ Last updated: 2026-02-19
 
 ---
 
+### 9. Persistir cancellationReason y cancellationDate (EPIC-16)
+
+**Status:** Deferred to Post-MVP
+
+**Description:** Los campos `cancellationReason` y `cancellationDate` del modelo Order no se persisten cuando el cliente solicita una cancelación. Strapi v5 aplica sanitización profunda en el controller genérico `update`, eliminando estos campos del payload.
+
+**Current Workaround:**
+- El motivo se guarda en `statusChangeNote` (visible en admin)
+- La fecha queda en `order_status_history` (timestamp del cambio a `cancellation_requested`)
+- El flujo completo funciona correctamente
+
+**Root Cause:**
+- Frontend proxy (`src/app/api/orders/[orderId]/request-cancellation/route.ts`) usa `PUT /api/orders/:id` genérico
+- Strapi v5 sanitiza el input y elimina `cancellationReason`/`cancellationDate`
+- El controller custom `requestCancellation` del backend nunca se invoca
+
+**Recommended Actions:**
+- [ ] Refactorizar el proxy frontend para llamar al endpoint custom `POST /api/orders/:id/request-cancellation`
+- [ ] O registrar un Document Service middleware que permita los campos sin sanitización
+- [ ] Verificar E2E que ambos campos se persistan
+
+**Estimated Effort:** 2-3 hours
+
+---
+
 ## Test Infrastructure Improvements
 
 ### Test Helper Coverage
@@ -258,6 +283,7 @@ Last updated: 2026-02-19
 | ORD-37 | Tests: Transition validation | Complete |
 | ORD-38 | Tests: Status history | Complete |
 | ORD-39 | Tests: No backward transitions | Complete |
+| AND-100 | Persistir cancellationReason/cancellationDate | Deferred (Post-MVP) |
 
 ---
 
@@ -268,3 +294,4 @@ Last updated: 2026-02-19
 | 2026-02-19 | Initial document creation after ORD-34 implementation | - |
 | 2026-02-19 | Added ORD-36 (email rollback) as Post-MVP improvement | - |
 | 2026-02-19 | Updated related issues table with ORD-35 to ORD-39 status | - |
+| 2026-02-26 | Added AND-100: cancellationReason/Date persistence as Post-MVP debt | - |
