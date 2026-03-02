@@ -275,6 +275,7 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
   /**
    * POST /api/orders/:id/request-cancellation
    *
+   * [ARCH-02] Delegated to request-cancellation service
    * [REF-03] Handles customer requests to cancel an order
    * [REF-04] Validates that only the order owner can request cancellation
    * [REF-05] Validates that order is in a valid state for cancellation
@@ -282,72 +283,21 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
   async requestCancellation(ctx) {
     const { id } = ctx.params;
     const userId = ctx.state.user?.id;
+    const reason = ctx.request.body?.reason;
 
     if (!userId) {
       return ctx.unauthorized('You must be logged in to request an order cancellation');
     }
 
-    const reason = ctx.request.body?.reason;
-    if (!reason || typeof reason !== 'string' || reason.trim() === '') {
-      strapi.log.warn(`[REF-03] Cancel request for order ${id} rejected: Invalid reason`);
-      return ctx.badRequest('A cancellation reason must be provided');
-    }
-
-    let order: any;
-    try {
-      order = await strapi.documents('api::order.order').findOne({
-        documentId: id,
-        populate: ['user'],
-      });
-    } catch (error) {
-      strapi.log.warn(`[REF-03] Error finding order ${id} for cancellation:`, error);
-      return ctx.notFound('Order not found');
-    }
-
-    if (!order) {
-      return ctx.notFound('Order not found');
-    }
-
     const userRole = await getUserRole(userId, strapi);
-    const isAdministrator = userRole === 'administrator';
-
-    // [REF-04] Validate ownership
-    if (!isAdministrator && order.user?.documentId !== ctx.state.user.documentId && order.user?.id !== userId) {
-      strapi.log.warn(`[REF-04] User ${userId} attempted to cancel unauthorized order: ${id}`);
-      return ctx.forbidden('You can only cancel your own orders');
-    }
-
-    // [REF-05] Validate state
-    const currentStatus = order.orderStatus;
-    const allowedStatuses = ['pending', 'paid', 'processing'];
-
-    if (!allowedStatuses.includes(currentStatus)) {
-      strapi.log.warn(`[REF-05] Cancel request rejected for order ${id}: Invalid state ${currentStatus}`);
-      return ctx.badRequest(`Order cannot be cancelled in status: ${currentStatus}`);
-    }
-
-    // Process the cancellation request
-    strapi.log.info(`[REF-03] User ${userId} requested cancellation for order ${id}. Reason: "${reason.substring(0, 50)}..."`);
 
     try {
-      // Use db.query to bypass Strapi v5 content API sanitization
-      // which strips cancellationReason and cancellationDate from controller context
-      await strapi.db.query('api::order.order').update({
-        where: { id: order.id },
-        data: {
-          orderStatus: 'cancellation_requested',
-          cancellationReason: reason.substring(0, 1000),
-          cancellationDate: new Date().toISOString(),
-          statusChangeNote: `El cliente ha solicitado la cancelación del pedido. Motivo: ${reason}`,
-        },
-      });
-
-      // Fetch the updated order to return in response
-      const updatedOrder = await strapi.documents('api::order.order').findOne({
-        documentId: order.documentId,
-      });
-
-      strapi.log.info(`[REF-03] ✅ Order ${id} updated to cancellation_requested. Reason saved: "${reason.substring(0, 50)}..."`);
+      const updatedOrder = await strapi.service('api::order.request-cancellation').requestCancellation(
+        id,
+        userId,
+        reason,
+        userRole
+      );
 
       return {
         data: {
@@ -356,8 +306,16 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
         },
         meta: {}
       };
-    } catch (error) {
-      strapi.log.error(`[REF-03] Error updating order ${id} for cancellation:`, error);
+    } catch (error: any) {
+      if (error.message === 'Order not found') {
+        return ctx.notFound(error.message);
+      }
+      if (error.message === 'You can only cancel your own orders') {
+        return ctx.forbidden(error.message);
+      }
+      if (error.message.includes('Invalid status') || error.message.includes('A cancellation reason must be provided') || error.message.includes('Order cannot be cancelled in status')) {
+        return ctx.badRequest(error.message);
+      }
       return ctx.internalServerError('An error occurred while processing the cancellation request');
     }
   },
@@ -365,81 +323,24 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
   /**
    * POST /api/orders/stripe-webhook
    *
+   * [ARCH-02] Delegated to stripe-webhook service
    * [REF-10] Handles Stripe's charge.refunded webhooks
    */
   async stripeWebhook(ctx) {
     const signature = ctx.request.headers['stripe-signature'];
-    const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET;
-
-    if (!endpointSecret) {
-      strapi.log.error('[REF-10] STRIPE_WEBHOOK_SECRET is not configured');
-      return ctx.internalServerError('Webhook secret not configured');
-    }
-
-    const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
-      apiVersion: '2026-01-28.clover' as any,
-    });
-
-    let event: Stripe.Event;
+    const unparsedBody = ctx.request.body[Symbol.for('unparsedBody')] || ctx.request.body;
 
     try {
-      const unparsedBody = ctx.request.body[Symbol.for('unparsedBody')] || ctx.request.body;
-
-      if (!unparsedBody) {
-        strapi.log.error('[REF-10] No unparsed body available for Stripe webhook');
-        return ctx.badRequest('Missing raw body');
+      const response = await strapi.service('api::order.stripe-webhook').handleStripeWebhook(
+        signature,
+        unparsedBody
+      );
+      return ctx.send(response);
+    } catch (error: any) {
+      if (error.message.includes('signature verification failed') || error.message.includes('raw body')) {
+        return ctx.badRequest(error.message);
       }
-
-      event = stripe.webhooks.constructEvent(unparsedBody, signature, endpointSecret);
-    } catch (err: any) {
-      strapi.log.error(`[REF-10] Webhook signature verification failed: ${err.message}`);
-      return ctx.badRequest(`Webhook signature verification failed.`);
+      return ctx.internalServerError(error.message);
     }
-
-    strapi.log.info(`[REF-10] Stripe webhook received: ${event.type}`);
-
-    if (event.type === 'charge.refunded') {
-      const charge = event.data.object as Stripe.Charge;
-      const paymentIntentId = typeof charge.payment_intent === 'string' ? charge.payment_intent : charge.payment_intent?.id;
-
-      if (!paymentIntentId) {
-        strapi.log.warn('[REF-10] charge.refunded received without a payment_intent ID');
-        return ctx.send({ received: true });
-      }
-
-      try {
-        const orders = await strapi.entityService.findMany('api::order.order', {
-          filters: { paymentIntentId: paymentIntentId },
-        }) as any[];
-
-        if (!orders || orders.length === 0) {
-          strapi.log.warn(`[REF-10] Webhook: No order found for paymentIntent ${paymentIntentId}`);
-          return ctx.send({ received: true });
-        }
-
-        const order = orders[0];
-
-        if (order.orderStatus === 'refunded') {
-          strapi.log.info(`[REF-10] Webhook: Order ${order.orderId} is already refunded. Ignoring.`);
-          return ctx.send({ received: true });
-        }
-
-        await strapi.entityService.update('api::order.order', order.id, {
-          data: {
-            orderStatus: 'refunded',
-            statusChangeNote: 'Automated refund confirmation via Stripe webhook',
-          },
-        });
-
-        strapi.log.info(`[REF-10] Webhook: Order ${order.orderId} successfully marked as refunded.`);
-      } catch (error) {
-        strapi.log.error(`[REF-10] Webhook: Error processing charge.refunded for payment intent ${paymentIntentId}:`, error);
-        return ctx.internalServerError('Error processing webhook event');
-      }
-    } else {
-      strapi.log.debug(`[REF-10] Unhandled webhook event type: ${event.type}`);
-    }
-
-    return ctx.send({ received: true });
   }
 }));

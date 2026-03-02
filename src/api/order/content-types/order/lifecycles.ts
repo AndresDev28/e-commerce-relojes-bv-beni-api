@@ -8,79 +8,10 @@
  * [ORD-33] Creates status history entries for audit purposes
  */
 
-import { validateOrderTransition } from '../../helpers/validate-order-transition'
+import { validateOrderTransition } from '../../../../core/domain/order/order.types'
 import { errors } from '@strapi/utils';
 
 const { ApplicationError } = errors;
-
-/**
- * Helper function to create status history entry
- * [ORD-33] Centralized logic for status history recording
- * Uses unidirectional relation (manyToOne from statusHistory to order)
- */
-async function createStatusHistoryEntry(
-  strapi: any,
-  orderId: number,
-  fromStatus: string | null,
-  toStatus: string,
-  changedByEmail: string = 'system@example.com',
-  note?: string
-) {
-  try {
-    await strapi.entityService.create('api::order-status-history.order-status-history', {
-      data: {
-        fromStatus,
-        toStatus,
-        changedAt: new Date(),
-        changedByEmail,
-        note: note || undefined,
-        order: { connect: [orderId] }
-      }
-    })
-
-    console.log(`[ORD-33] Status change logged: ${fromStatus || 'initial'} → ${toStatus} for order ID ${orderId} by ${changedByEmail}`)
-  } catch (error) {
-    console.error(`[ORD-33] Failed to create status history entry:`, {
-      orderId,
-      fromStatus,
-      toStatus,
-      error: error.message || error?.toString() || String(error),
-      stack: error.stack
-    })
-  }
-}
-
-/**
- * Helper function to update product stock
- * [REF-09] Atomic stock management
- */
-async function updateProductStock(strapi: any, productId: number | string, quantityChange: number) {
-  try {
-    // Ensure we handle both numeric IDs and string IDs (documentId) correctly
-    // If it's a numeric string, convert to number
-    const numericId = typeof productId === 'string' && !isNaN(Number(productId)) ? Number(productId) : productId;
-
-    const product = await strapi.entityService.findOne('api::product.product', numericId, {
-      fields: ['stock', 'name']
-    });
-
-    if (!product) {
-      strapi.log.error(`[REF-09] Product ${productId} not found for stock update`);
-      return;
-    }
-
-    const currentStock = product.stock || 0;
-    const newStock = currentStock + quantityChange;
-
-    await strapi.entityService.update('api::product.product', product.id, {
-      data: { stock: Math.max(0, newStock) }
-    });
-
-    strapi.log.info(`[REF-09] Stock updated for "${product.name}" (${product.id}): ${currentStock} → ${newStock}`);
-  } catch (error) {
-    strapi.log.error(`[REF-09] Failed to update stock for product ${productId}:`, error.message);
-  }
-}
 
 export default {
   async beforeCreate(event) {
@@ -145,8 +76,7 @@ export default {
       const changedByEmail = ctx?.state?.user?.email || 'system@example.com'
 
       // Create initial status history entry (from null to current status)
-      await createStatusHistoryEntry(
-        strapi,
+      await strapi.service('api::order.order').createStatusHistoryEntry(
         result.id,
         null, // No previous status for new orders
         result.orderStatus,
@@ -161,7 +91,7 @@ export default {
         for (const item of result.items) {
           if (item.id && item.quantity) {
             // quantity is positive, so quantityChange is -item.quantity
-            await updateProductStock(strapi, item.id, -item.quantity);
+            await strapi.service('api::order.order').updateProductStock(item.id, -item.quantity);
           }
         }
       }
@@ -275,8 +205,7 @@ export default {
       const changedByEmail = ctx?.state?.user?.email || 'system@example.com'
 
       // 3. [ORD-33/34] Create status history entry with note
-      await createStatusHistoryEntry(
-        strapi,
+      await strapi.service('api::order.order').createStatusHistoryEntry(
         result.id,
         previousStatus,
         newStatus,
@@ -296,7 +225,7 @@ export default {
           for (const item of result.items) {
             if (item.id && item.quantity) {
               // quantity is positive, so quantityChange is item.quantity (positive)
-              await updateProductStock(strapi, item.id, item.quantity);
+              await strapi.service('api::order.order').updateProductStock(item.id, item.quantity);
             }
           }
         }
