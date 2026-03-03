@@ -81,6 +81,12 @@
       "relation": "oneToMany",
       "target": "api::order-status-history.order-status-history",
       "mappedBy": "order"
+    },
+    "shipment": {
+      "type": "relation",
+      "relation": "oneToOne",
+      "target": "api::shipment.shipment",
+      "mappedBy": "order"
     }
   }
 }
