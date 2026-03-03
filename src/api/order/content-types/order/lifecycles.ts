@@ -13,6 +13,94 @@ import { errors } from '@strapi/utils';
 
 const { ApplicationError } = errors;
 
+async function sendOrderEmailWebhook(strapi: any, result: any, newStatus: string, previousStatus: string | null, statusChangeNote: string | null, isNewOrder = false) {
+  // 5. [ORD-22] Check if email notifications are enabled
+  const emailNotificationsDisabled = process.env.DISABLE_EMAIL_NOTIFICATIONS === 'true'
+  if (emailNotificationsDisabled) {
+    strapi.log.info('[ORD-22] Email notification disabled via env var')
+    return
+  }
+
+  // 6. Get user mail and shipment info
+  // Important: Need to populate user relation to get email and shipment for tracking
+  const order: any = await strapi.entityService.findOne('api::order.order', result.id, {
+    populate: ['user', 'shipment'] as any,
+  })
+
+  if (!order?.user?.email) {
+    strapi.log.error(`[ORD-22] Order ${result.orderId}: No user email found, cannot send notification`)
+    return
+  }
+
+  const customerEmail = order.user.email
+  const customerName = order.user.username || 'Cliente'
+
+  strapi.log.info(`[ORD-22] Order ${result.orderId}: Sending email to ${customerEmail}`)
+
+  // 7. Prepare webhook payload
+  const payload = {
+    orderId: result.orderId,
+    customerEmail,
+    customerName,
+    orderStatus: newStatus,
+    previousOrderStatus: previousStatus, // [REF-12] Usado en frontend para detectar rechazos de cancelación
+    statusChangeNote, // [ORD-34] Include note in webhook payload
+    isNewOrder,
+    orderData: {
+      items: result.items,
+      subtotal: parseFloat(result.subtotal),
+      shipping: parseFloat(result.shipping),
+      total: parseFloat(result.total),
+      createdAt: result.createdAt,
+      shipment: order.shipment ? {
+        tracking_number: order.shipment.tracking_number,
+        carrier: order.shipment.carrier,
+        status: order.shipment.status,
+        estimated_delivery_date: order.shipment.estimated_delivery_date
+      } : null
+    },
+  }
+
+  strapi.log.debug(`[ORD-22] Payload prepared:`, { orderId: result.orderId, status: newStatus, isNewOrder })
+
+  // 8. Call Next.js webhook
+  const frontendUrl = process.env.FRONTEND_URL
+  const webhookSecret = process.env.WEBHOOK_SECRET
+
+  if (!frontendUrl || !webhookSecret) {
+    strapi.log.error('[ORD-22] Missing FRONTEND_URL or WEBHOOK_SECRET env vars')
+    return
+  }
+
+  const webhookUrl = `${frontendUrl}/api/send-order-email`
+
+  strapi.log.debug(`[ORD-22] Calling webhook: ${webhookUrl}`)
+
+  try {
+    const response = await fetch(webhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Webhook-Secret': webhookSecret,
+      },
+      body: JSON.stringify(payload),
+    })
+
+    // 9. Handle response
+    const responseData = await response.json()
+    if (response.ok) {
+      strapi.log.info(`[ORD-22] ✅ Email sent successfully for order ${result.orderId}`)
+    } else {
+      strapi.log.error(`[ORD-22] ❌ Email sending failed for order ${result.orderId}:`, {
+        status: response.status,
+        error: responseData,
+      })
+    }
+  } catch (webhookError) {
+    strapi.log.error(`[ORD-22] ❌ Webhook call failed:`, webhookError)
+  }
+}
+
 export default {
   async beforeCreate(event) {
     const { data } = event.params
@@ -94,6 +182,9 @@ export default {
             await strapi.service('api::order.order').updateProductStock(item.id, -item.quantity);
           }
         }
+
+        // 3. Send initial purchase email webhook to frontend
+        await sendOrderEmailWebhook(strapi, result, result.orderStatus, null, null, true);
       }
     } catch (error) {
       strapi.log.error(`[ORD-33/REF-09] Exception in afterCreate hook:`, {
@@ -231,90 +322,8 @@ export default {
         }
       }
 
-      // 5. [ORD-22] Check if email notifications are enabled
-      const emailNotificationsDisabled = process.env.DISABLE_EMAIL_NOTIFICATIONS === 'true'
-      if (emailNotificationsDisabled) {
-        strapi.log.info('[ORD-22] Email notification disabled via env var')
-        return
-      }
-
-      // 6. Get user mail and shipment info
-      // Important: Need to populate user relation to get email and shipment for tracking
-      const order: any = await strapi.entityService.findOne('api::order.order', result.id, {
-        populate: ['user', 'shipment'] as any,
-      })
-
-      if (!order?.user?.email) {
-        strapi.log.error(`[ORD-22] Order ${result.orderId}: No user email found, cannot send notification`)
-        return
-      }
-
-      const customerEmail = order.user.email
-      const customerName = order.user.username || 'Cliente'
-
-      strapi.log.info(`[ORD-22] Order ${result.orderId}: Sending email to ${customerEmail}`)
-
-      // 7. Prepare webhook payload
-      const payload = {
-        orderId: result.orderId,
-        customerEmail,
-        customerName,
-        orderStatus: newStatus,
-        previousOrderStatus: previousStatus, // [REF-12] Usado en frontend para detectar rechazos de cancelación
-        statusChangeNote, // [ORD-34] Include note in webhook payload
-        orderData: {
-          items: result.items,
-          subtotal: parseFloat(result.subtotal),
-          shipping: parseFloat(result.shipping),
-          total: parseFloat(result.total),
-          createdAt: result.createdAt,
-          shipment: order.shipment ? {
-            tracking_number: order.shipment.tracking_number,
-            carrier: order.shipment.carrier,
-            status: order.shipment.status,
-            estimated_delivery_date: order.shipment.estimated_delivery_date
-          } : null
-        },
-      }
-
-      strapi.log.debug(`[ORD-22] Payload prepared:`, { orderId: result.orderId, status: newStatus })
-
-      // 8. Call Next.js webhook
-      const frontendUrl = process.env.FRONTEND_URL
-      const webhookSecret = process.env.WEBHOOK_SECRET
-
-      if (!frontendUrl || !webhookSecret) {
-        strapi.log.error('[ORD-22] Missing FRONTEND_URL or WEBHOOK_SECRET env vars')
-        return
-      }
-
-      const webhookUrl = `${frontendUrl}/api/send-order-email`
-
-      strapi.log.debug(`[ORD-22] Calling webhook: ${webhookUrl}`)
-
-      const response = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Webhook-Secret': webhookSecret,
-        },
-        body: JSON.stringify(payload),
-      })
-
-      // 9. Handle response
-      try {
-        const responseData = await response.json()
-        if (response.ok) {
-          strapi.log.info(`[ORD-22] ✅ Email sent successfully for order ${result.orderId}`)
-        } else {
-          strapi.log.error(`[ORD-22] ❌ Email sending failed for order ${result.orderId}:`, {
-            status: response.status,
-            error: responseData,
-          })
-        }
-      } catch (webhookError) {
-        strapi.log.error(`[ORD-22] ❌ Webhook call failed:`, webhookError)
-      }
+      // 5. Send Email webhook to Next.js
+      await sendOrderEmailWebhook(strapi, result, newStatus, previousStatus, statusChangeNote, false);
 
       // 10. [REF-08] Trigger Refund if status changed to 'refunded'
       if (newStatus === 'refunded') {
