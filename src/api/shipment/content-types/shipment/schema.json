@@ -1,0 +1,40 @@
+{
+    "kind": "collectionType",
+    "collectionName": "shipments",
+    "info": {
+        "singularName": "shipment",
+        "pluralName": "shipments",
+        "displayName": "Shipment",
+        "description": "Shipping information for an order"
+    },
+    "options": {
+        "draftAndPublish": false
+    },
+    "pluginOptions": {},
+    "attributes": {
+        "tracking_number": {
+            "type": "string"
+        },
+        "carrier": {
+            "type": "string"
+        },
+        "estimated_delivery_date": {
+            "type": "date"
+        },
+        "status": {
+            "type": "enumeration",
+            "enum": [
+                "pending",
+                "shipped",
+                "delivered"
+            ],
+            "default": "pending"
+        },
+        "order": {
+            "type": "relation",
+            "relation": "oneToOne",
+            "target": "api::order.order",
+            "inversedBy": "shipment"
+        }
+    }
+}

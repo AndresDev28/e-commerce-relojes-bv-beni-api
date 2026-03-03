@@ -9,6 +9,7 @@ export default [
       sensitiveRoutes: ["/api/orders", "/api/payments", "/api/stripe"],
     },
   },
+  "global::rate-limit",
   {
     name: "strapi::cors",
     config: {
