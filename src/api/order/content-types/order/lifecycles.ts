@@ -238,10 +238,10 @@ export default {
         return
       }
 
-      // 6. Get user mail
-      // Important: Need to populate user relation to get email
+      // 6. Get user mail and shipment info
+      // Important: Need to populate user relation to get email and shipment for tracking
       const order: any = await strapi.entityService.findOne('api::order.order', result.id, {
-        populate: ['user'],
+        populate: ['user', 'shipment'] as any,
       })
 
       if (!order?.user?.email) {
@@ -268,6 +268,12 @@ export default {
           shipping: parseFloat(result.shipping),
           total: parseFloat(result.total),
           createdAt: result.createdAt,
+          shipment: order.shipment ? {
+            tracking_number: order.shipment.tracking_number,
+            carrier: order.shipment.carrier,
+            status: order.shipment.status,
+            estimated_delivery_date: order.shipment.estimated_delivery_date
+          } : null
         },
       }
 
