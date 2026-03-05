@@ -242,7 +242,7 @@ export default {
 
       if (!validation.valid) {
         strapi.log.warn(`[ORD-32] Invalid status transition attempted: ${currentStatus} → ${newStatus} for order ${existingOrder.orderId}. Error: ${validation.error}`)
-        throw new Error(validation.error)
+        throw new ApplicationError(validation.error)
       }
 
       strapi.log.info(`[ORD-32] Valid status transition: ${currentStatus} → ${newStatus} for order ${existingOrder.orderId}`)
@@ -319,6 +319,54 @@ export default {
               await strapi.service('api::order.order').updateProductStock(item.id, item.quantity);
             }
           }
+        }
+      }
+
+      // [SHIP-02] Auto-create Shipment when order becomes 'shipped'
+      if (newStatus === 'shipped' && previousStatus !== 'shipped') {
+        try {
+          // Attempt to extract tracking info from the admin note
+          let trackingNumber = `TRK-${result.orderId}`; // Default tracking if none provided
+          let carrier = 'Otro';
+
+          if (statusChangeNote) {
+            const lowerNote = statusChangeNote.toLowerCase();
+            if (lowerNote.includes('seur')) carrier = 'SEUR';
+            else if (lowerNote.includes('correos')) carrier = 'Correos';
+            else if (lowerNote.includes('gls')) carrier = 'GLS';
+            else if (lowerNote.includes('mrw')) carrier = 'MRW';
+
+            // Extract potential tracking number (alphanumeric string > 5 chars)
+            const match = statusChangeNote.match(/[A-Z0-9]{6,20}/i);
+            if (match) {
+              trackingNumber = match[0].toUpperCase();
+            }
+          }
+
+          // Query real: afterUpdate result does NOT populate relations
+          const existingShipments = await strapi.documents('api::shipment.shipment' as any).findMany({
+            filters: { order: { documentId: result.documentId } },
+            limit: 1,
+          } as any);
+
+          if (!existingShipments || existingShipments.length === 0) {
+            strapi.log.info(`[SHIP-02] Auto-creating shipment for order ${result.orderId} with tracking ${trackingNumber}`);
+
+            // In Strapi v5 Document Service API, relations use connect syntax
+            await strapi.documents('api::shipment.shipment' as any).create({
+              data: {
+                order: { connect: [result.documentId] },
+                status: 'shipped',
+                carrier: carrier,
+                tracking_number: trackingNumber,
+              } as any
+            });
+            strapi.log.info(`[SHIP-02] Successfully created Shipment for Order ${result.orderId}`);
+          } else {
+            strapi.log.info(`[SHIP-02] Shipment already exists for Order ${result.orderId}, skipping creation.`);
+          }
+        } catch (shipmentError) {
+          strapi.log.error(`[SHIP-02] Failed to auto-create Shipment for Order ${result.orderId}:`, shipmentError);
         }
       }
 
