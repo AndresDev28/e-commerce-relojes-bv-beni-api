@@ -585,6 +585,36 @@ export async function createTestOrder(data?: {
   }
 }
 
+export async function createTestShipment(data?: {
+  tracking_number?: string
+  carrier?: string
+  status?: 'pending' | 'shipped' | 'delivered'
+  estimated_delivery_date?: string
+}, orderId?: number | string) {
+  const strapi = getStrapi()
+
+  try {
+    if (!orderId) {
+      throw new Error('orderId is required for creating test shipment')
+    }
+
+    const shipment = await strapi.entityService.create('api::shipment.shipment' as any, {
+      data: {
+        tracking_number: data?.tracking_number || `TRK-TEST-${Date.now()}`,
+        carrier: data?.carrier || 'Otro',
+        status: data?.status || 'pending',
+        estimated_delivery_date: data?.estimated_delivery_date || null,
+        order: { connect: [orderId] } as any,
+      },
+      populate: ['order'],
+    })
+
+    return shipment
+  } catch (error) {
+    throw new Error(`Failed to create test shipment: ${error.message}`)
+  }
+}
+
 // ======== CLEANUP UTILITIES ========
 export async function cleanupUsers() {
   const strapi = getStrapi()
@@ -616,12 +646,21 @@ export async function cleanupContent() {
   const strapi = getStrapi()
 
   try {
-    // 1. Eliminar productos, categorías, órdenes de prueba
+    // 1. Eliminar shipments, productos, categorías, órdenes de prueba
+    let shipments: any[] = []
+    try {
+      const result = await strapi.entityService.findMany('api::shipment.shipment' as any)
+      shipments = Array.isArray(result) ? result : result ? [result] : []
+    } catch { /* Shipment entity may not exist yet */ }
     const orders = await strapi.entityService.findMany('api::order.order')
     const products = await strapi.entityService.findMany('api::product.product')
     const categories = await strapi.entityService.findMany('api::category.category')
 
     // Eliminar en orden correcto (dependencias primero)
+    for (const shipment of shipments) {
+      await strapi.entityService.delete('api::shipment.shipment' as any, shipment.id)
+    }
+
     for (const order of orders) {
       await strapi.entityService.delete('api::order.order', order.id)
     }
@@ -634,7 +673,7 @@ export async function cleanupContent() {
       await strapi.entityService.delete('api::category.category', category.id)
     }
 
-    console.log(`🗑️ Cleaned up ${orders.length} orders, ${products.length} products, ${categories.length} categories`)
+    console.log(`🗑️ Cleaned up ${shipments.length} shipments, ${orders.length} orders, ${products.length} products, ${categories.length} categories`)
   } catch (error) {
     console.error('Error cleaning up content:', error)
   }
