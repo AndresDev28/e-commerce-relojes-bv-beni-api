@@ -63,7 +63,7 @@ const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
     paid: ['processing', 'cancelled', 'refunded', 'cancellation_requested'],
     processing: ['shipped', 'cancelled', 'refunded', 'cancellation_requested'],
     cancellation_requested: ['cancelled', 'refunded', 'processing'],
-    shipped: ['delivered', 'cancelled', 'refunded'],
+    shipped: ['delivered', 'cancelled', 'refunded', 'processing'],
     delivered: [],
     cancelled: [],
     refunded: [],

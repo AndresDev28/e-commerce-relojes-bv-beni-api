@@ -26,7 +26,8 @@
             "enum": [
                 "pending",
                 "shipped",
-                "delivered"
+                "delivered",
+                "failed"
             ],
             "default": "pending"
         },

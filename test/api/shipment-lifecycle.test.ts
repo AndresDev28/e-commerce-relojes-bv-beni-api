@@ -374,6 +374,39 @@ describe('[SHIP-04] Shipment Model & Lifecycle Hooks', () => {
             expect(updatedOrder.orderStatus).toBe('shipped')
             console.log('✅ [RS-2] PASSED — Order remains shipped')
         })
+
+        it('[RS-3] Shipment failed → Order goes back to processing', async () => {
+            console.log('\n🎯 [RS-3] Shipment failed → Order back to processing')
+
+            const order = await createTestOrder({
+                orderStatus: 'shipped' as const,
+                items: [{ productId: 1, name: 'Reloj Failed', price: 299.99, quantity: 1 }],
+                subtotal: 299.99,
+                shipping: 10,
+                total: 309.99
+            }, testUser.id)
+
+            const shipment = await createTestShipment({
+                tracking_number: 'RS3-FAILED-TEST',
+                carrier: 'SEUR',
+                status: 'shipped',
+            }, order.id)
+
+            // Update Shipment to failed (triggers Shipment afterUpdate lifecycle)
+            await strapi.entityService.update('api::shipment.shipment' as any, shipment.id, {
+                data: { status: 'failed' }
+            })
+
+            await new Promise(resolve => setTimeout(resolve, 500))
+
+            // Verify Order went back to processing
+            const updatedOrder = await strapi.entityService.findOne('api::order.order', order.id, {
+                fields: ['orderStatus']
+            })
+
+            expect(updatedOrder.orderStatus).toBe('processing')
+            console.log('✅ [RS-3] PASSED — Order back to processing')
+        })
     })
 
     // ════════════════════════════════════════════════════════════
