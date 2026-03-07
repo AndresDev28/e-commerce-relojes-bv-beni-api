@@ -55,7 +55,7 @@ async function sendOrderEmailWebhook(strapi: any, result: any, newStatus: string
       shipment: order.shipment ? {
         tracking_number: order.shipment.tracking_number,
         carrier: order.shipment.carrier,
-        status: order.shipment.status,
+        shipmentStatus: order.shipment.shipmentStatus,
         estimated_delivery_date: order.shipment.estimated_delivery_date
       } : null
     },
@@ -356,7 +356,7 @@ export default {
             await strapi.documents('api::shipment.shipment' as any).create({
               data: {
                 order: { connect: [result.documentId] },
-                status: 'shipped',
+                shipmentStatus: 'shipped',
                 carrier: carrier,
                 tracking_number: trackingNumber,
               } as any

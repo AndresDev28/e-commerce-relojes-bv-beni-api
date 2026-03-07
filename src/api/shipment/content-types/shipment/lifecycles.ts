@@ -10,7 +10,7 @@ export default {
     async beforeUpdate(event) {
         const { where } = event.params
 
-        // Store previous status for comparison in afterUpdate
+        // Store previous shipmentStatus for comparison in afterUpdate
         let existingShipment: any = null
 
         try {
@@ -19,13 +19,13 @@ export default {
                     .documents('api::shipment.shipment' as any)
                     .findFirst({
                         filters: { documentId: where.documentId },
-                        fields: ['status'],
+                        fields: ['shipmentStatus'],
                     } as any)
             } else if (where.id) {
                 existingShipment = await strapi.entityService.findOne(
                     'api::shipment.shipment' as any,
                     where.id,
-                    { fields: ['status'] }
+                    { fields: ['shipmentStatus'] }
                 )
             }
         } catch (findError) {
@@ -37,7 +37,7 @@ export default {
 
         if (existingShipment) {
             event.state = event.state || {}
-            event.state.previousStatus = existingShipment.status
+            event.state.previousStatus = existingShipment.shipmentStatus
         }
     },
 
@@ -46,7 +46,7 @@ export default {
 
         try {
             const previousStatus = event.state?.previousStatus
-            const newStatus = result.status
+            const newStatus = result.shipmentStatus
 
             strapi.log.info(
                 `[SHIP-03] afterUpdate: Shipment ${result.tracking_number} | previousStatus = ${previousStatus} | newStatus = ${newStatus}`

@@ -21,7 +21,7 @@
         "estimated_delivery_date": {
             "type": "date"
         },
-        "status": {
+        "shipmentStatus": {
             "type": "enumeration",
             "enum": [
                 "pending",
