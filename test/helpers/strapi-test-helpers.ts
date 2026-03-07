@@ -588,7 +588,7 @@ export async function createTestOrder(data?: {
 export async function createTestShipment(data?: {
   tracking_number?: string
   carrier?: string
-  status?: 'pending' | 'shipped' | 'delivered'
+  shipmentStatus?: 'pending' | 'shipped' | 'delivered' | 'failed'
   estimated_delivery_date?: string
 }, orderId?: number | string) {
   const strapi = getStrapi()
@@ -602,7 +602,7 @@ export async function createTestShipment(data?: {
       data: {
         tracking_number: data?.tracking_number || `TRK-TEST-${Date.now()}`,
         carrier: data?.carrier || 'Otro',
-        status: data?.status || 'pending',
+        shipmentStatus: data?.shipmentStatus || 'pending',
         estimated_delivery_date: data?.estimated_delivery_date || null,
         order: { connect: [orderId] } as any,
       },

@@ -21,12 +21,13 @@
         "estimated_delivery_date": {
             "type": "date"
         },
-        "status": {
+        "shipmentStatus": {
             "type": "enumeration",
             "enum": [
                 "pending",
                 "shipped",
-                "delivered"
+                "delivered",
+                "failed"
             ],
             "default": "pending"
         },

@@ -511,6 +511,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
     paymentInfo: Schema.Attribute.JSON;
     paymentIntentId: Schema.Attribute.String;
     publishedAt: Schema.Attribute.DateTime;
+    shipment: Schema.Attribute.Relation<'oneToOne', 'api::shipment.shipment'>;
     shippedAt: Schema.Attribute.Date;
     shipping: Schema.Attribute.Decimal & Schema.Attribute.Required;
     statusChangeNote: Schema.Attribute.String &
@@ -567,6 +568,42 @@ export interface ApiProductProduct extends Struct.CollectionTypeSchema {
       'manyToMany',
       'plugin::users-permissions.user'
     >;
+  };
+}
+
+export interface ApiShipmentShipment extends Struct.CollectionTypeSchema {
+  collectionName: 'shipments';
+  info: {
+    description: 'Shipping information for an order';
+    displayName: 'Shipment';
+    pluralName: 'shipments';
+    singularName: 'shipment';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    carrier: Schema.Attribute.String;
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
+    estimated_delivery_date: Schema.Attribute.Date;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<
+      'oneToMany',
+      'api::shipment.shipment'
+    > &
+      Schema.Attribute.Private;
+    order: Schema.Attribute.Relation<'oneToOne', 'api::order.order'>;
+    publishedAt: Schema.Attribute.DateTime;
+    shipmentStatus: Schema.Attribute.Enumeration<
+      ['pending', 'shipped', 'delivered', 'failed']
+    > &
+      Schema.Attribute.DefaultTo<'pending'>;
+    tracking_number: Schema.Attribute.String;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> &
+      Schema.Attribute.Private;
   };
 }
 
@@ -1084,6 +1121,7 @@ declare module '@strapi/strapi' {
       'api::order-status-history.order-status-history': ApiOrderStatusHistoryOrderStatusHistory;
       'api::order.order': ApiOrderOrder;
       'api::product.product': ApiProductProduct;
+      'api::shipment.shipment': ApiShipmentShipment;
       'plugin::content-releases.release': PluginContentReleasesRelease;
       'plugin::content-releases.release-action': PluginContentReleasesReleaseAction;
       'plugin::i18n.locale': PluginI18NLocale;

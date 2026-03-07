@@ -51,20 +51,21 @@ export interface WebhookEmailPayload {
  *
  * Rules:
  * - Normal flow: pending → paid → processing → shipped → delivered
- * - Terminal states: delivered, cancelled, refunded cannot be changed
+ * - Terminal states: cancelled, refunded cannot be changed
+ * - Delivered can revert to processing if shipment fails (SHIP-03)
  * - Cancellation/refund: Can transition to cancelled/refunded from any active state
  * - Cancellation request: Customer can request cancellation from pending, paid, or processing
  *
- * Active states: pending, paid, processing, shipped, cancellation_requested
- * Terminal states: delivered, cancelled, refunded
+ * Active states: pending, paid, processing, shipped, cancellation_requested, delivered
+ * Terminal states: cancelled, refunded
  */
 const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
     pending: ['paid', 'cancelled', 'refunded', 'cancellation_requested'],
     paid: ['processing', 'cancelled', 'refunded', 'cancellation_requested'],
     processing: ['shipped', 'cancelled', 'refunded', 'cancellation_requested'],
     cancellation_requested: ['cancelled', 'refunded', 'processing'],
-    shipped: ['delivered', 'cancelled', 'refunded'],
-    delivered: [],
+    shipped: ['delivered', 'cancelled', 'refunded', 'processing'],
+    delivered: ['processing'], // Allow revert if shipment fails after delivery
     cancelled: [],
     refunded: [],
 };

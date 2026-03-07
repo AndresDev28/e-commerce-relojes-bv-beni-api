@@ -69,13 +69,13 @@ describe('[SHIP-04] Shipment Model & Lifecycle Hooks', () => {
             const shipment = await createTestShipment({
                 tracking_number: 'TRK-SM1-TEST',
                 carrier: 'SEUR',
-                status: 'shipped',
+                shipmentStatus: 'shipped',
             }, order.id)
 
             expect(shipment).toBeDefined()
             expect(shipment.tracking_number).toBe('TRK-SM1-TEST')
             expect(shipment.carrier).toBe('SEUR')
-            expect(shipment.status).toBe('shipped')
+            expect(shipment.shipmentStatus).toBe('shipped')
             console.log('✅ [SM-1] PASSED')
         })
 
@@ -93,13 +93,13 @@ describe('[SHIP-04] Shipment Model & Lifecycle Hooks', () => {
             const shipment = await createTestShipment({
                 tracking_number: 'SEUR-987654',
                 carrier: 'SEUR',
-                status: 'shipped',
+                shipmentStatus: 'shipped',
                 estimated_delivery_date: '2026-03-15',
             }, order.id)
 
             expect(shipment.tracking_number).toBe('SEUR-987654')
             expect(shipment.carrier).toBe('SEUR')
-            expect(shipment.status).toBe('shipped')
+            expect(shipment.shipmentStatus).toBe('shipped')
             expect(shipment.estimated_delivery_date).toBeDefined()
             console.log('✅ [SM-2] PASSED')
         })
@@ -118,7 +118,7 @@ describe('[SHIP-04] Shipment Model & Lifecycle Hooks', () => {
             const shipment = await createTestShipment({
                 tracking_number: 'REL-TEST-001',
                 carrier: 'Correos',
-                status: 'shipped',
+                shipmentStatus: 'shipped',
             }, order.id)
 
             // Verify the relation from Shipment side
@@ -161,7 +161,7 @@ describe('[SHIP-04] Shipment Model & Lifecycle Hooks', () => {
             expect(shipmentList.length).toBeGreaterThanOrEqual(1)
 
             const autoShipment = shipmentList[0]
-            expect(autoShipment.status).toBe('shipped')
+            expect(autoShipment.shipmentStatus).toBe('shipped')
             expect(autoShipment.tracking_number).toBeDefined()
             expect(autoShipment.carrier).toBeDefined()
             console.log(`✅ [AC-1] PASSED — auto Shipment created with tracking: ${autoShipment.tracking_number}`)
@@ -306,7 +306,7 @@ describe('[SHIP-04] Shipment Model & Lifecycle Hooks', () => {
     })
 
     // ════════════════════════════════════════════════════════════
-    // 4. [SHIP-03] Reverse sync: Shipment status → Order status
+    // 4. [SHIP-03] Reverse sync: Shipment shipmentStatus → Order status
     // ════════════════════════════════════════════════════════════
     describe('[SHIP-03] Reverse Sync: Shipment → Order', () => {
         it('[RS-1] Shipment delivered → Order becomes delivered', async () => {
@@ -323,12 +323,12 @@ describe('[SHIP-04] Shipment Model & Lifecycle Hooks', () => {
             const shipment = await createTestShipment({
                 tracking_number: 'RS1-DELIVERED-TEST',
                 carrier: 'GLS',
-                status: 'shipped',
+                shipmentStatus: 'shipped',
             }, order.id)
 
             // Update Shipment to delivered (triggers Shipment afterUpdate lifecycle)
             await strapi.entityService.update('api::shipment.shipment' as any, shipment.id, {
-                data: { status: 'delivered' }
+                data: { shipmentStatus: 'delivered' }
             })
 
             await new Promise(resolve => setTimeout(resolve, 500))
@@ -356,7 +356,7 @@ describe('[SHIP-04] Shipment Model & Lifecycle Hooks', () => {
             const shipment = await createTestShipment({
                 tracking_number: 'RS2-NOCHANGE-TEST',
                 carrier: 'MRW',
-                status: 'shipped',
+                shipmentStatus: 'shipped',
             }, order.id)
 
             // Update Shipment without changing status (e.g. update carrier)
@@ -373,6 +373,39 @@ describe('[SHIP-04] Shipment Model & Lifecycle Hooks', () => {
 
             expect(updatedOrder.orderStatus).toBe('shipped')
             console.log('✅ [RS-2] PASSED — Order remains shipped')
+        })
+
+        it('[RS-3] Shipment failed → Order goes back to processing', async () => {
+            console.log('\n🎯 [RS-3] Shipment failed → Order back to processing')
+
+            const order = await createTestOrder({
+                orderStatus: 'shipped' as const,
+                items: [{ productId: 1, name: 'Reloj Failed', price: 299.99, quantity: 1 }],
+                subtotal: 299.99,
+                shipping: 10,
+                total: 309.99
+            }, testUser.id)
+
+            const shipment = await createTestShipment({
+                tracking_number: 'RS3-FAILED-TEST',
+                carrier: 'SEUR',
+                shipmentStatus: 'shipped',
+            }, order.id)
+
+            // Update Shipment to failed (triggers Shipment afterUpdate lifecycle)
+            await strapi.entityService.update('api::shipment.shipment' as any, shipment.id, {
+                data: { shipmentStatus: 'failed' }
+            })
+
+            await new Promise(resolve => setTimeout(resolve, 500))
+
+            // Verify Order went back to processing
+            const updatedOrder = await strapi.entityService.findOne('api::order.order', order.id, {
+                fields: ['orderStatus']
+            })
+
+            expect(updatedOrder.orderStatus).toBe('processing')
+            console.log('✅ [RS-3] PASSED — Order back to processing')
         })
     })
 
