@@ -15,6 +15,7 @@ export default [
     config: {
       origin: [
         "http://localhost:3000",
+        "http://relojes-bv-beni.localhost:1355",
         "https://e-commerce-relojes-bv-beni.vercel.app",
       ],
       headers: ["Content-Type", "Authorization", "Origin", "Accept"],
