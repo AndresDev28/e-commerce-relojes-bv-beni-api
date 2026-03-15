@@ -13,12 +13,11 @@ Nuestro backend separa estructuralmente las responsabilidades técnicas de la l�
 
 ## 🛠 Entorno de Desarrollo y Requisitos
 
-Este proyecto integra **Portless** para facilitar conexiones seguras y fluidas en el entorno local (HTTPS) y opera sobre **PostgreSQL**.
+Este proyecto opera sobre **PostgreSQL**.
 
 ### Prerrequisitos
 - Node.js (>=18.0.0 <=22.x.x)
 - Base de datos PostgreSQL
-- [Portless](https://portless.dev/) (Para routing y desarrollo HTTPS local)
 
 ### Comandos de Inicialización
 
@@ -27,10 +26,7 @@ Ejecute la instalación de dependencias y levante el servidor de desarrollo:
 ```bash
 npm install
 
-# Para ejecutar con las configuraciones locales de portless
-npm run dev
-
-# Para arrancar Strapi vanilla de forma directa
+# Para arrancar el servidor de desarrollo
 npm run develop
 ```
 
