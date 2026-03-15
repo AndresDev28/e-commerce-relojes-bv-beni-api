@@ -1,61 +1,60 @@
-# 🚀 Getting started with Strapi
+# BV Beni Watch Store - Core API
 
-Strapi comes with a full featured [Command Line Interface](https://docs.strapi.io/dev-docs/cli) (CLI) which lets you scaffold and manage your project in seconds.
+Esta es la infraestructura de backend oficial para la plataforma de alta relojería BV Beni. Desarrollada sobre [Strapi v5](https://strapi.io) y Node.js, esta API proporciona la robustez, seguridad y rendimiento exigidos para el manejo de transacciones de piezas exclusivas, implementando una arquitectura pragmática basada en el dominio de negocio.
 
-### `develop`
+## 🏛️ Arquitectura del Dominio y Capas (Screaming Architecture)
 
-Start your Strapi application with autoReload enabled. [Learn more](https://docs.strapi.io/dev-docs/cli#strapi-develop)
+Nuestro backend separa estructuralmente las responsabilidades técnicas de la lógica de negocio. Cada dominio maneja sus propios casos de uso, garantizando un código mantenible y escalable:
 
-```
+- **Catálogo & Inventario:** Gestión precisa de piezas de alta relojería, asegurando la integridad de los datos de cada calibre, complicación y disponibilidad.
+- **Transacciones (Orders, Shipments & Cancels):** Sistema orquestado de gestión de pedidos integrado con **Stripe** para procesamientos de pagos seguros. Incluye un ciclo de vida completo de envíos (Shipment lifecycle hooks) y transiciones automáticas de estado.
+- **Infraestructura de Comunicaciones:** Integración con **Resend** para notificar oportunamente cada etapa clave de la experiencia de compra, manteniendo a los clientes informados de manera profesional y oportuna.
+- **Privacidad & Seguridad (Hardening):** Riguroso enmascaramiento de PII en los logs del sistema, rate-limiting, y cumplimiento estricto de las directivas GDPR/RGPD para asegurar la máxima confidencialidad.
+
+## 🛠 Entorno de Desarrollo y Requisitos
+
+Este proyecto integra **Portless** para facilitar conexiones seguras y fluidas en el entorno local (HTTPS) y opera sobre **PostgreSQL**.
+
+### Prerrequisitos
+- Node.js (>=18.0.0 <=22.x.x)
+- Base de datos PostgreSQL
+- [Portless](https://portless.dev/) (Para routing y desarrollo HTTPS local)
+
+### Comandos de Inicialización
+
+Ejecute la instalación de dependencias y levante el servidor de desarrollo:
+
+```bash
+npm install
+
+# Para ejecutar con las configuraciones locales de portless
+npm run dev
+
+# Para arrancar Strapi vanilla de forma directa
 npm run develop
-# or
-yarn develop
 ```
 
-### `start`
+## 🧪 Testing y Aseguramiento de Calidad (QA)
 
-Start your Strapi application with autoReload disabled. [Learn more](https://docs.strapi.io/dev-docs/cli#strapi-start)
+El API incorpora una suite de pruebas robusta (unitarias y de integración) utilizando **Vitest**. Para ejecutar la suite siguiendo las normativas de conservación de memoria (Hardware Aware):
 
-```
-npm run start
-# or
-yarn start
-```
-
-### `build`
-
-Build your admin panel. [Learn more](https://docs.strapi.io/dev-docs/cli#strapi-build)
-
-```
-npm run build
-# or
-yarn build
+```bash
+npm run test
+# Alternativamente, para ejecutar controlando los workers manualmente:
+npx vitest run --maxWorkers=2
 ```
 
-## ⚙️ Deployment
+## 🚀 Entorno de Producción
 
-Strapi gives you many possible deployment options for your project including [Strapi Cloud](https://cloud.strapi.io). Browse the [deployment section of the documentation](https://docs.strapi.io/dev-docs/deployment) to find the best solution for your use case.
+La infraestructura está configurada para un lanzamiento resiliente en **Railway**, respaldado por una base de datos PostgreSQL de producción y **Cloudinary** para el almacenamiento de los activos multimedia del catálogo.
 
-```
-yarn strapi deploy
-```
+## 🛡 Normativas Core de Antigravity (Compliance)
 
-## 📚 Learn more
+Tanto ingenieros como agentes automatizados deben alinear su código a las siguientes directrices globales del ecosistema:
 
-- [Resource center](https://strapi.io/resource-center) - Strapi resource center.
-- [Strapi documentation](https://docs.strapi.io) - Official Strapi documentation.
-- [Strapi tutorials](https://strapi.io/tutorials) - List of tutorials made by the core team and the community.
-- [Strapi blog](https://strapi.io/blog) - Official Strapi blog containing articles made by the Strapi team and the community.
-- [Changelog](https://strapi.io/changelog) - Find out about the Strapi product updates, new features and general improvements.
-
-Feel free to check out the [Strapi GitHub repository](https://github.com/strapi/strapi). Your feedback and contributions are welcome!
-
-## ✨ Community
-
-- [Discord](https://discord.strapi.io) - Come chat with the Strapi community including the core team.
-- [Forum](https://forum.strapi.io/) - Place to discuss, ask questions and find answers, show your Strapi project and get feedback or just talk with other Community members.
-- [Awesome Strapi](https://github.com/strapi/awesome-strapi) - A curated list of awesome things related to Strapi.
+- **Cero Retención de PII en Texto Plano:** Terminantemente prohibido registrar información personal vulnerable en la base de datos o logs sin ofuscar.
+- **Single Source of Truth:** Los esquemas y modelos de Strapi aquí definidos actúan como la única fuente de la verdad para el tipo de datos que consume el cliente React. Toda alteración estructural en el backend requiere sincronización del contrato de datos.
+- **Tono y Excelencia (Luxury Standard):** Todas las devoluciones de error amigables, notificaciones al cliente o correos estructurados deben presentarse con una voz sobria, experta y orientada al nivel del lujo exigido.
 
 ---
-
-<sub>🤫 Psst! [Strapi is hiring](https://strapi.io/careers).</sub>
+<sub>Mantén la precisión técnica como si de un calendario perpetuo se tratase. | **BV Beni Watch Store**</sub>
