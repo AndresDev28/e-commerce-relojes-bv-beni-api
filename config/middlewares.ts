@@ -56,6 +56,4 @@ export default [
   "strapi::session",
   "strapi::favicon",
   "strapi::public",
-  // Image standardizer - procesa imágenes hero de productos automáticamente
-  "global::image-standardizer",
 ];
