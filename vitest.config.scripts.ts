@@ -6,6 +6,6 @@ export default defineConfig({
     globals: true,
     testTimeout: 60000, // Background removal can be slow
     exclude: ['dist', '.strapi', 'node_modules'],
-    include: ['tests/scripts/**/*.test.{js,ts}'],
+    include: ['tests/scripts/**/*.test.{js,ts}', 'tests/upload/**/*.test.{js,ts}'],
   },
 })

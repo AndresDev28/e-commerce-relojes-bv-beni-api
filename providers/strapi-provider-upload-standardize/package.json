@@ -1,0 +1,7 @@
+{
+  "name": "strapi-provider-upload-standardize",
+  "version": "1.0.0",
+  "description": "Custom upload provider that standardizes product hero images",
+  "main": "./index.js",
+  "dependencies": {}
+}
