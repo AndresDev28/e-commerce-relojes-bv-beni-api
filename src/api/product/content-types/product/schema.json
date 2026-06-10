@@ -48,6 +48,12 @@
       "relation": "manyToMany",
       "target": "plugin::users-permissions.user",
       "mappedBy": "favorites"
+    },
+    "color": {
+      "type": "string"
+    },
+    "brand": {
+      "type": "string"
     }
   }
 }
