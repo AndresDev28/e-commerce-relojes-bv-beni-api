@@ -13,9 +13,13 @@ module.exports = {
     } else {
       // Production mode: provider is a string
       const realProviderModule = require(provider)
-      realProvider = realProviderModule.default 
-        ? realProviderModule.default(rest) 
-        : realProviderModule(rest)
+      if (typeof realProviderModule.init === 'function') {
+        realProvider = realProviderModule.init(rest)
+      } else if (typeof realProviderModule.default === 'function') {
+        realProvider = realProviderModule.default(rest)
+      } else {
+        realProvider = realProviderModule(rest)
+      }
     }
 
     return {

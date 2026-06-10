@@ -12,9 +12,9 @@ export default ({ env }) => ({
     config: env("CLOUDINARY_NAME")
       ? {
           // Producción: Cloudinary con procesamiento
-          provider: "standardize",
+          provider: "strapi-provider-upload-standardize",
           providerOptions: {
-            provider: "cloudinary",
+            provider: "@strapi/provider-upload-cloudinary",
             cloud_name: env("CLOUDINARY_NAME"),
             api_key: env("CLOUDINARY_KEY"),
             api_secret: env("CLOUDINARY_SECRET"),
@@ -26,9 +26,9 @@ export default ({ env }) => ({
         }
       : {
           // Desarrollo: Local con procesamiento
-          provider: "standardize",
+          provider: "strapi-provider-upload-standardize",
           providerOptions: {
-            provider: "local",
+            provider: "@strapi/provider-upload-local",
             sizeLimit: 10000000, // 10MB
           },
         },
