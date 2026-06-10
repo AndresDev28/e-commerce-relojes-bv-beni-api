@@ -23,7 +23,7 @@ describe('Security Workflow (security.yml)', () => {
       expect(on).toBeDefined();
       const schedule = (on as Record<string, unknown>).schedule;
       expect(Array.isArray(schedule)).toBe(true);
-      expect(schedule.length).toBeGreaterThan(0);
+      expect((schedule as unknown[]).length).toBeGreaterThan(0);
     });
 
     it('should have cron expression for Monday 06:00 UTC', () => {
