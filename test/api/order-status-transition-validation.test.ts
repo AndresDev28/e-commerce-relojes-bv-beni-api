@@ -379,11 +379,12 @@ describe('[ORD-32] Order Status Transition Validation', () => {
         total: 209.99
       }, testUser.id)
 
+      // delivered only allows transition to processing, so shipped is rejected
       await expect(
         strapi.entityService.update('api::order.order', order.id, {
           data: { orderStatus: 'shipped' }
         })
-      ).rejects.toThrow('Cannot change status from "delivered" to "shipped"')
+      ).rejects.toThrow('Invalid status transition from "delivered" to "shipped"')
 
       const unchangedOrder = await strapi.entityService.findOne('api::order.order', order.id, {
         fields: ['orderStatus']
@@ -572,8 +573,8 @@ describe('[ORD-32] Order Status Transition Validation', () => {
       console.log('✅ [IT-8] PASSED: refunded → paid rejected')
     })
 
-    it('[IT-9] should reject any transition from delivered', async () => {
-      console.log('\n🎯 [IT-9] Testing: delivered → processing (INVALID - terminal)')
+    it('[IT-9] should allow transition from delivered to processing (revert for failed shipment)', async () => {
+      console.log('\n🎯 [IT-9] Testing: delivered → processing (ALLOWED - SHIP-03 revert)')
 
       const order = await createTestOrder({
         orderStatus: 'delivered' as const,
@@ -583,18 +584,40 @@ describe('[ORD-32] Order Status Transition Validation', () => {
         total: 209.99
       }, testUser.id)
 
+      // delivered → processing is ALLOWED per VALID_TRANSITIONS (SHIP-03: revert if shipment fails)
+      const updatedOrder = await strapi.entityService.update('api::order.order', order.id, {
+        data: { orderStatus: 'processing' }
+      })
+
+      expect(updatedOrder.orderStatus).toBe('processing')
+
+      console.log('✅ [IT-9] PASSED: delivered → processing allowed (shipment revert)')
+    })
+
+    it('[IT-9b] should reject transition from delivered to pending (backward)', async () => {
+      console.log('\n🎯 [IT-9b] Testing: delivered → pending (INVALID - backward)')
+
+      const order = await createTestOrder({
+        orderStatus: 'delivered' as const,
+        items: [{ productId: 1, name: 'Reloj Test', price: 199.99, quantity: 1 }],
+        subtotal: 199.99,
+        shipping: 10,
+        total: 209.99
+      }, testUser.id)
+
+      // delivered only allows transition to processing
       await expect(
         strapi.entityService.update('api::order.order', order.id, {
-          data: { orderStatus: 'processing' }
+          data: { orderStatus: 'pending' }
         })
-      ).rejects.toThrow('Cannot change status from "delivered" to "processing". State "delivered" is terminal.')
+      ).rejects.toThrow('Invalid status transition from "delivered" to "pending"')
 
       const unchangedOrder = await strapi.entityService.findOne('api::order.order', order.id, {
         fields: ['orderStatus']
       })
 
       expect(unchangedOrder.orderStatus).toBe('delivered')
-      console.log('✅ [IT-9] PASSED: delivered → processing rejected')
+      console.log('✅ [IT-9b] PASSED: delivered → pending rejected')
     })
   })
 

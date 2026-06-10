@@ -74,7 +74,10 @@ describe('[ORD-24] Order Email Webhook - Lifecycle Integration', () => {
     // Setup de variables de entorno necesarias para el lifecycle hook
     process.env.FRONTEND_URL = 'http://localhost:3000'
     process.env.WEBHOOK_SECRET = 'test-webhook-secret-123'
-    process.env.DISABLE_EMAIL_NOTIFICATIONS = 'false' // Permitir emails en este test
+    // Disable by default — afterCreate fires a webhook on order creation.
+    // Individual tests that need to verify webhooks should enable notifications
+    // AFTER creating the order but BEFORE updating it.
+    process.env.DISABLE_EMAIL_NOTIFICATIONS = 'true'
   })
 
   // ========================================
@@ -156,7 +159,11 @@ describe('[ORD-24] Order Email Webhook - Lifecycle Integration', () => {
 
     console.log(`✅ Order created: ${initialOrder.orderId} (Status: ${initialOrder.orderStatus})`)
 
-    // Verificar que el order se creó correctamente
+    // Enable notifications AFTER creating the order so afterCreate doesn't fire a webhook.
+    // We only want to test the afterUpdate webhook triggered by the status change.
+    process.env.DISABLE_EMAIL_NOTIFICATIONS = 'false'
+
+    // Verify that the order se creó correctamente
     expect(initialOrder).toBeDefined()
     expect(initialOrder.orderStatus).toBe('processing')
     // Note: No verificamos .user aquí porque createTestOrder ya lo valida internamente
@@ -457,6 +464,7 @@ describe('[ORD-24] Order Email Webhook - Lifecycle Integration', () => {
       vi.stubGlobal('fetch', mockFetch)
 
       // 2. Crear orden con el estado inicial ("from")
+      // Notifications are disabled by default (beforeEach), so afterCreate won't fire.
       const initialOrder = await createTestOrder(
         {
           items: [{ productId: 99, name: 'Multi-status Product', price: 50, quantity: 1 }],
@@ -467,6 +475,9 @@ describe('[ORD-24] Order Email Webhook - Lifecycle Integration', () => {
         },
         testUser.id
       )
+
+      // Enable notifications AFTER creating the order — we only want to test the afterUpdate webhook
+      process.env.DISABLE_EMAIL_NOTIFICATIONS = 'false'
 
       // 3. Act: Cambiar al estado objetivo ("to")
       await strapi.entityService.update(
@@ -520,6 +531,9 @@ describe('[ORD-24] Order Email Webhook - Lifecycle Integration', () => {
         },
         testUser.id
       )
+
+      // Enable notifications AFTER creating the order
+      process.env.DISABLE_EMAIL_NOTIFICATIONS = 'false'
 
       // ACT: Intentar actualizar el estado
 
