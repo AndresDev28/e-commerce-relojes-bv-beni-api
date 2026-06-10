@@ -19,7 +19,10 @@
     "test:coverage": "npm run build && vitest run --coverage",
     "test:only": "vitest run",
     "test:scripts": "vitest run --config vitest.config.scripts.ts",
-    "standardize": "node scripts/standardize-images.mjs"
+    "standardize": "node scripts/standardize-images.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"test/**/*.{ts,tsx}\"",
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"test/**/*.{ts,tsx}\""
   },
   "dependencies": {
     "@strapi/plugin-cloud": "5.23.5",
@@ -35,6 +38,7 @@
     "styled-components": "^6.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.0.0",
     "@imgly/background-removal-node": "^1.4.5",
     "@types/node": "^20",
     "@types/react": "^18",
@@ -43,10 +47,15 @@
     "@vitest/coverage-v8": "^4.0.18",
     "@vitest/ui": "^4.0.17",
     "baseline-browser-mapping": "^2.9.6",
+    "eslint": "^9.0.0",
+    "eslint-config-prettier": "^10.0.0",
+    "globals": "^17.6.0",
+    "prettier": "^3.0.0",
     "sharp": "^0.34.5",
     "supertest": "^7.2.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3",
+    "typescript-eslint": "^8.0.0",
     "vitest": "^4.0.17"
   },
   "engines": {
