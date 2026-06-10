@@ -26,22 +26,34 @@ module.exports = {
       ...realProvider,
 
       async upload(file) {
+        console.log('[UPLOAD] Processing file:', file.name, 'related:', file.related)
+        
         // Check if this is a product image
         if (file.related && file.related[0] && file.related[0].ref === 'api::product.product') {
+          console.log('[UPLOAD] Product image detected, checking if hero...')
+          
           // Check if this is the first image (hero) of the product
           const isHero = await checkIfHeroImage(file)
+          console.log('[UPLOAD] Is hero image:', isHero)
           
           if (isHero) {
-            // Process the image
-            const processedBuffer = await processImage(file.buffer)
-            file.buffer = processedBuffer
-            file.size = processedBuffer.length
-            // Update mime type since we're converting to webp
-            file.mime = 'image/webp'
-            if (file.ext) {
-              file.ext = '.webp'
+            console.log('[UPLOAD] Processing hero image...')
+            try {
+              const processedBuffer = await processImage(file.buffer)
+              file.buffer = processedBuffer
+              file.size = processedBuffer.length
+              // Update mime type since we're converting to webp
+              file.mime = 'image/webp'
+              if (file.ext) {
+                file.ext = '.webp'
+              }
+              console.log('[UPLOAD] Hero image processed successfully')
+            } catch (error) {
+              console.error('[UPLOAD] Error processing hero image:', error.message)
             }
           }
+        } else {
+          console.log('[UPLOAD] Not a product image, skipping processing')
         }
 
         // Upload to real provider
