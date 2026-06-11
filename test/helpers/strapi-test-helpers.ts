@@ -81,6 +81,8 @@ const TEST_ENV_VARS = {
   DATABASE_CLIENT: 'sqlite',
   DATABASE_FILENAME: ':memory:',
   STRAPI_DISABLE_CRON: 'true',
+  STRIPE_SECRET_KEY: 'sk_test_placeholder_for_tests',
+  STRIPE_WEBHOOK_SECRET: 'whsec_test_placeholder',
   DISABLE_EMAIL_NOTIFICATIONS: 'true',
   HOST: '127.0.0.1',
   PORT: '1338', // Puerto diferente para testing

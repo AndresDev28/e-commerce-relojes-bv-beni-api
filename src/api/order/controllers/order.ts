@@ -342,7 +342,9 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
           errorMessage.includes('raw body') ||
           errorMessage.includes('No signatures found') ||
           errorMessage.includes('webhook') ||
-          errorMessage.includes('Stripe')) {
+          errorMessage.includes('Stripe') ||
+          errorMessage.includes('apiKey') ||
+          errorMessage.includes('not configured')) {
         return ctx.badRequest(error.message);
       }
       return ctx.internalServerError(error.message);
