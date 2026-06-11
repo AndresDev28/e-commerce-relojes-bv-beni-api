@@ -19,7 +19,14 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
             throw new Error(msg);
         }
 
-        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string, {
+        const secretKey = process.env.STRIPE_SECRET_KEY;
+        if (!secretKey) {
+            const msg = '[REF-10] STRIPE_SECRET_KEY is not configured';
+            strapi.log.error(msg);
+            throw new Error(msg);
+        }
+
+        const stripe = new Stripe(secretKey, {
             apiVersion: '2026-01-28.clover' as any,
         });
 

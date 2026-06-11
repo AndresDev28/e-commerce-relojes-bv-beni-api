@@ -337,7 +337,14 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
       );
       return ctx.send(response);
     } catch (error: any) {
-      if (error.message.includes('signature verification failed') || error.message.includes('raw body')) {
+      const errorMessage = error.message || '';
+      if (errorMessage.includes('signature verification failed') || 
+          errorMessage.includes('raw body') ||
+          errorMessage.includes('No signatures found') ||
+          errorMessage.includes('webhook') ||
+          errorMessage.includes('Stripe') ||
+          errorMessage.includes('apiKey') ||
+          errorMessage.includes('not configured')) {
         return ctx.badRequest(error.message);
       }
       return ctx.internalServerError(error.message);

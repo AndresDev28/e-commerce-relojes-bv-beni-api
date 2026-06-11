@@ -141,4 +141,43 @@ describe('Stripe Webhook Integration Tests [REF-10]', () => {
         const currentProduct = await strapi.entityService.findOne('api::product.product', product.id);
         expect(currentProduct.stock).toBe(10);
     });
+
+    it('should throw clear error when STRIPE_SECRET_KEY is missing [REF-10]', async () => {
+        const strapi = getStrapi();
+        const originalKey = process.env.STRIPE_SECRET_KEY;
+
+        // Clear the key to simulate missing configuration
+        delete process.env.STRIPE_SECRET_KEY;
+
+        try {
+            const service = strapi.service('api::order.stripe-webhook') as any;
+            await expect(service.handleStripeWebhook('sig', '{}'))
+                .rejects
+                .toThrow('STRIPE_SECRET_KEY is not configured');
+        } finally {
+            // Restore the key so other tests are not affected
+            process.env.STRIPE_SECRET_KEY = originalKey!;
+        }
+    });
+
+    it('should return 400 (not 500) when STRIPE_SECRET_KEY is missing', async () => {
+        const strapi = getStrapi();
+        const originalKey = process.env.STRIPE_SECRET_KEY;
+
+        // Clear the key
+        delete process.env.STRIPE_SECRET_KEY;
+
+        try {
+            const response = await request(strapi.server.httpServer)
+                .post('/api/orders/stripe-webhook')
+                .set('stripe-signature', 't=123,v1=test')
+                .set('Content-Type', 'application/json')
+                .send(JSON.stringify({ id: 'evt_test' }));
+
+            expect(response.status).toBe(400);
+            expect(response.text).toContain('STRIPE_SECRET_KEY is not configured');
+        } finally {
+            process.env.STRIPE_SECRET_KEY = originalKey!;
+        }
+    });
 });

@@ -48,7 +48,7 @@ describe('[ORD-34] Order Status Change Notes', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
-    process.env.DISABLE_EMAIL_NOTIFICATIONS = 'undefined'
+    process.env.DISABLE_EMAIL_NOTIFICATIONS = 'true'
   })
 
   describe('Suite 1: Basic Note Recording', () => {
@@ -155,9 +155,10 @@ describe('[ORD-34] Order Status Change Notes', () => {
       })
       vi.stubGlobal('fetch', mockFetch)
 
-      process.env.DISABLE_EMAIL_NOTIFICATIONS = 'undefined'
       process.env.FRONTEND_URL = 'https://test-frontend.example.com'
       process.env.WEBHOOK_SECRET = 'test-webhook-secret'
+      // Keep notifications DISABLED during order creation (afterCreate fires a webhook)
+      // process.env.DISABLE_EMAIL_NOTIFICATIONS is already 'true' from beforeEach
 
       const order = await createTestOrder({
         orderStatus: 'pending' as const,
@@ -167,6 +168,9 @@ describe('[ORD-34] Order Status Change Notes', () => {
         total: 209.99
       }, testUser.id)
 
+      // Enable notifications AFTER creating the order — test only the afterUpdate webhook
+      process.env.DISABLE_EMAIL_NOTIFICATIONS = 'false'
+
       await strapi.entityService.update('api::order.order', order.id, {
         data: {
           orderStatus: 'paid',
@@ -174,12 +178,13 @@ describe('[ORD-34] Order Status Change Notes', () => {
         }
       })
 
-      if (mockFetch.mock.calls.length > 0) {
-        const webhookCall = mockFetch.mock.calls[0]
-        const webhookBody = JSON.parse(webhookCall[1].body)
+      await new Promise(resolve => setTimeout(resolve, 100))
 
-        expect(webhookBody.statusChangeNote).toBe('Customer paid via credit card')
-      }
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      const webhookCall = mockFetch.mock.calls[0]
+      const webhookBody = JSON.parse(webhookCall[1].body)
+
+      expect(webhookBody.statusChangeNote).toBe('Customer paid via credit card')
 
       console.log('✅ [NT-4] PASSED: Note included in webhook payload')
     })
@@ -193,9 +198,9 @@ describe('[ORD-34] Order Status Change Notes', () => {
       })
       vi.stubGlobal('fetch', mockFetch)
 
-      process.env.DISABLE_EMAIL_NOTIFICATIONS = 'undefined'
       process.env.FRONTEND_URL = 'https://test-frontend.example.com'
       process.env.WEBHOOK_SECRET = 'test-webhook-secret'
+      // Keep notifications DISABLED during order creation
 
       const order = await createTestOrder({
         orderStatus: 'pending' as const,
@@ -205,16 +210,20 @@ describe('[ORD-34] Order Status Change Notes', () => {
         total: 209.99
       }, testUser.id)
 
+      // Enable notifications AFTER creating the order
+      process.env.DISABLE_EMAIL_NOTIFICATIONS = 'false'
+
       await strapi.entityService.update('api::order.order', order.id, {
         data: { orderStatus: 'paid' }
       })
 
-      if (mockFetch.mock.calls.length > 0) {
-        const webhookCall = mockFetch.mock.calls[0]
-        const webhookBody = JSON.parse(webhookCall[1].body)
+      await new Promise(resolve => setTimeout(resolve, 100))
 
-        expect(webhookBody.statusChangeNote).toBeNull()
-      }
+      expect(mockFetch).toHaveBeenCalledTimes(1)
+      const webhookCall = mockFetch.mock.calls[0]
+      const webhookBody = JSON.parse(webhookCall[1].body)
+
+      expect(webhookBody.statusChangeNote).toBeNull()
 
       console.log('✅ [NT-5] PASSED: No note field in webhook when not provided')
     })
