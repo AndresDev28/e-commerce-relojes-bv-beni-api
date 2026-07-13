@@ -71,6 +71,99 @@ export default {
       strapi.log.error('[ORD-26] Error configuring Order permissions:', error);
     }
 
+    // [PRD-01] Configure Product API permissions for authenticated role.
+    // Required by the frontend's stock-verification step in checkout
+    // (createPaymentIntentService.ts). Without find/findOne, authenticated
+    // users hit 403 on `filters[id][$eq]=...` queries.
+    try {
+      const authenticatedRole = await strapi.query('plugin::users-permissions.role').findOne({
+        where: { type: 'authenticated' }
+      });
+
+      if (!authenticatedRole) {
+        strapi.log.warn('[PRD-01] Authenticated role not found, skipping product permission setup');
+      } else {
+        const productPermissions = [
+          { action: 'api::product.product.find', enabled: true },
+          { action: 'api::product.product.findOne', enabled: true },
+        ];
+
+        for (const perm of productPermissions) {
+          const existingPermission = await strapi.query('plugin::users-permissions.permission').findOne({
+            where: {
+              action: perm.action,
+              role: authenticatedRole.id
+            }
+          });
+
+          if (existingPermission) {
+            if (!existingPermission.enabled) {
+              await strapi.query('plugin::users-permissions.permission').update({
+                where: { id: existingPermission.id },
+                data: { enabled: true }
+              });
+              strapi.log.info(`[PRD-01] Updated permission: ${perm.action}`);
+            }
+          } else {
+            await strapi.query('plugin::users-permissions.permission').create({
+              data: {
+                action: perm.action,
+                role: authenticatedRole.id,
+                enabled: true
+              }
+            });
+            strapi.log.info(`[PRD-01] Created permission: ${perm.action}`);
+          }
+        }
+
+        strapi.log.info('[PRD-01] Product API permissions configured successfully');
+      }
+    } catch (error) {
+      strapi.log.error('[PRD-01] Error configuring Product permissions:', error);
+    }
+
+    // [PRD-02] Configure User-permissions User update for authenticated role.
+    // Required by the frontend's favorites feature (updateFavoritesService.ts).
+    // Without user.update, authenticated users hit 403 on PUT /api/users/:id.
+    try {
+      const authenticatedRole = await strapi.query('plugin::users-permissions.role').findOne({
+        where: { type: 'authenticated' }
+      });
+
+      if (!authenticatedRole) {
+        strapi.log.warn('[PRD-02] Authenticated role not found, skipping user permission setup');
+      } else {
+        const userPermissions = [
+          'plugin::users-permissions.user.update',
+        ];
+
+        for (const action of userPermissions) {
+          const existingPermission = await strapi.query('plugin::users-permissions.permission').findOne({
+            where: { action, role: authenticatedRole.id }
+          });
+
+          if (existingPermission) {
+            if (!existingPermission.enabled) {
+              await strapi.query('plugin::users-permissions.permission').update({
+                where: { id: existingPermission.id },
+                data: { enabled: true }
+              });
+              strapi.log.info(`[PRD-02] Updated permission: ${action}`);
+            }
+          } else {
+            await strapi.query('plugin::users-permissions.permission').create({
+              data: { action, role: authenticatedRole.id, enabled: true }
+            });
+            strapi.log.info(`[PRD-02] Created permission: ${action}`);
+          }
+        }
+
+        strapi.log.info('[PRD-02] User update permissions configured successfully');
+      }
+    } catch (error) {
+      strapi.log.error('[PRD-02] Error configuring User update permissions:', error);
+    }
+
     // [ORD-30] Setup administrator role and permissions
     try {
       let adminRole = await strapi.query('plugin::users-permissions.role').findOne({
