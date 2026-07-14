@@ -17,7 +17,7 @@ export default [
         "http://localhost:3000",
         "https://e-commerce-relojes-bv-beni.vercel.app",
       ],
-      headers: ["Content-Type", "Authorization", "Origin", "Accept", "X-Trace-Id"],
+      headers: ["Content-Type", "Authorization", "Origin", "Accept"],
       methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
       credentials: true,
     },
