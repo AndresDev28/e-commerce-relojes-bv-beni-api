@@ -50,7 +50,13 @@
       "mappedBy": "favorites"
     },
     "color": {
-      "type": "string"
+      "type": "enumeration",
+      "enum": [
+        "silver",
+        "gold",
+        "white",
+        "black"
+      ]
     },
     "brand": {
       "type": "string"
