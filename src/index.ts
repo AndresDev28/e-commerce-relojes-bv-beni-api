@@ -53,8 +53,18 @@ export default {
         try {
           const row = event?.result;
           if (!row || typeof row !== 'object') return;
-          const next = normalizeAssetUrl(row.url, rewriteCtx);
-          if (next === row.url) return;
+          // Use the ORIGINAL input URL (params.data.url), not row.url.
+          // Strapi's create() flow is INSERT → internal findOne() → afterCreate;
+          // the findOne() step fires afterFindOne which mutates event.result.url
+          // in-memory. Reading row.url here would see the already-rewritten
+          // value, the short-circuit would skip persistence, and the DB row
+          // would stay relative (breaking populate, which bypasses lifecycles).
+          const originalUrl =
+            event?.params?.data && typeof event.params.data === 'object'
+              ? (event.params.data as any).url
+              : row.url;
+          const next = normalizeAssetUrl(originalUrl, rewriteCtx);
+          if (next === originalUrl) return;
           row.url = next;
           if (row.id != null) {
             await strapi.db.query('plugin::upload.file').update({

@@ -157,6 +157,11 @@ export async function setupStrapi() {
   // config/plugins.ts keys the provider on CLOUDINARY_NAME presence — we
   // must delete the Cloudinary env vars BEFORE createStrapi() runs so the
   // local provider is selected and relative /uploads paths are exercised.
+  // Strapi's @strapi/core/dist/configuration/index.js calls
+  // dotenv.config({ path: process.env.ENV_PATH }) at module load — we point
+  // ENV_PATH to a non-existent file so the project's .env is NOT loaded
+  // (which would otherwise re-set CLOUDINARY_NAME from disk).
+  process.env.ENV_PATH = '/tmp/__strapi-test-no-env__.env'
   delete process.env.CLOUDINARY_NAME
   delete process.env.CLOUDINARY_KEY
   delete process.env.CLOUDINARY_SECRET
