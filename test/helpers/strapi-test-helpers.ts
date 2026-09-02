@@ -86,6 +86,10 @@ const TEST_ENV_VARS = {
   DISABLE_EMAIL_NOTIFICATIONS: 'true',
   HOST: '127.0.0.1',
   PORT: '1338', // Puerto diferente para testing
+  // [bug-images-400-backend] Pin STRAPI_PUBLIC_URL so the upload.file
+  // lifecycle subscriber can rewrite relative /uploads paths to absolute
+  // URLs during tests. Provider is forced to local (see setupStrapi()).
+  STRAPI_PUBLIC_URL: 'http://127.0.0.1:1338',
 }
 
 // ======== STRAPI INSTANCE MANAGEMENT ========
@@ -149,6 +153,19 @@ async function setupTestPermissions(strapi: Core.Strapi) {
 }
 
 export async function setupStrapi() {
+  // [bug-images-400-backend] Force local upload provider in tests.
+  // config/plugins.ts keys the provider on CLOUDINARY_NAME presence — we
+  // must delete the Cloudinary env vars BEFORE createStrapi() runs so the
+  // local provider is selected and relative /uploads paths are exercised.
+  // Strapi's @strapi/core/dist/configuration/index.js calls
+  // dotenv.config({ path: process.env.ENV_PATH }) at module load — we point
+  // ENV_PATH to a non-existent file so the project's .env is NOT loaded
+  // (which would otherwise re-set CLOUDINARY_NAME from disk).
+  process.env.ENV_PATH = '/tmp/__strapi-test-no-env__.env'
+  delete process.env.CLOUDINARY_NAME
+  delete process.env.CLOUDINARY_KEY
+  delete process.env.CLOUDINARY_SECRET
+
   // 1. Setear variables de entorno para testing
   Object.entries(TEST_ENV_VARS).forEach(([key, value]) => {
     process.env[key] = value
