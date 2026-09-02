@@ -1,4 +1,9 @@
 import type { Core } from '@strapi/strapi';
+import { normalizeAssetUrl } from './utils/normalize-asset-url';
+
+// [bug-images-400-backend] WARN-once flag for STRAPI_PUBLIC_URL degradation.
+// Module-scoped — fires at most once per process lifetime (decision B).
+let publicUrlWarned = false;
 
 export default {
   /**
@@ -17,6 +22,92 @@ export default {
    * run jobs, or perform some special logic.
    */
   async bootstrap({ strapi }: { strapi: Core.Strapi }) {
+    // [bug-images-400-backend] Subscribe to plugin::upload.file lifecycles
+    // BEFORE ORD-26 try block (line 24). The ORD-26 block has an early-return
+    // at line 31 when the authenticated role is missing — anything tail-
+    // appended would be silently skipped. Locked extension point #3.
+    const publicUrl =
+      typeof process.env.STRAPI_PUBLIC_URL === 'string' && process.env.STRAPI_PUBLIC_URL.trim() !== ''
+        ? process.env.STRAPI_PUBLIC_URL.trim()
+        : null;
+    const fallbackBaseUrl =
+      typeof strapi.config.server?.url === 'string' && strapi.config.server.url.trim() !== ''
+        ? strapi.config.server.url.trim()
+        : null;
+
+    const rewriteCtx = {
+      publicUrl,
+      fallbackBaseUrl,
+      onWarn: () => {
+        if (publicUrlWarned) return;
+        publicUrlWarned = true;
+        strapi.log.warn(
+          '[bug-images-400] STRAPI_PUBLIC_URL is unset; falling back to strapi.config.server.url. Set STRAPI_PUBLIC_URL to silence this warning.',
+        );
+      },
+    };
+
+    strapi.db.lifecycles.subscribe({
+      models: ['plugin::upload.file'],
+      async afterCreate(event: any) {
+        try {
+          const row = event?.result;
+          if (!row || typeof row !== 'object') return;
+          const next = normalizeAssetUrl(row.url, rewriteCtx);
+          if (next === row.url) return;
+          row.url = next;
+          if (row.id != null) {
+            await strapi.db.query('plugin::upload.file').update({
+              where: { id: row.id },
+              data: { url: next },
+            });
+          }
+        } catch (e: any) {
+          strapi.log.warn('[bug-images-400] afterCreate rewrite skipped:', e?.message);
+        }
+      },
+      async afterUpdate(event: any) {
+        try {
+          const row = event?.result;
+          if (!row || typeof row !== 'object') return;
+          const next = normalizeAssetUrl(row.url, rewriteCtx);
+          if (next === row.url) return;
+          row.url = next;
+          if (row.id != null) {
+            await strapi.db.query('plugin::upload.file').update({
+              where: { id: row.id },
+              data: { url: next },
+            });
+          }
+        } catch (e: any) {
+          strapi.log.warn('[bug-images-400] afterUpdate rewrite skipped:', e?.message);
+        }
+      },
+      afterFindOne(event: any) {
+        try {
+          const row = event?.result;
+          if (!row || typeof row !== 'object') return;
+          row.url = normalizeAssetUrl(row.url, rewriteCtx);
+        } catch (e: any) {
+          strapi.log.warn('[bug-images-400] afterFindOne rewrite skipped:', e?.message);
+        }
+      },
+      afterFindMany(event: any) {
+        try {
+          const rows = event?.result;
+          if (!Array.isArray(rows)) return;
+          for (const row of rows) {
+            if (!row || typeof row !== 'object') continue;
+            row.url = normalizeAssetUrl(row.url, rewriteCtx);
+          }
+        } catch (e: any) {
+          strapi.log.warn('[bug-images-400] afterFindMany rewrite skipped:', e?.message);
+        }
+      },
+    });
+
+    strapi.log.info('[bug-images-400] upload.file lifecycle subscribed');
+
     // [ORD-26] Configure permissions for Order API
     // This ensures the 'authenticated' role has proper permissions
     // for find, findOne, and create actions on orders
