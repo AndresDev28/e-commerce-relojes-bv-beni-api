@@ -136,6 +136,16 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
     /**
      * [REF-10] Legacy `charge.refunded` branch — preserved byte-identical
      * per D-DESIGN-11 / Decision 11. Stays on Entity Service.
+     *
+     * [GAP-1 PR4b T-PR4b-5] Terminal guard: when the matched Order is in
+     * `payment_failed`, the unconditional transition to `refunded` would
+     * be REJECTED by `beforeUpdate`'s `validateOrderTransition` (R-PFS-2
+     * — `payment_failed → refunded` is forbidden) and surface as a
+     * 4xx/5xx error. Stripe would then retry the webhook indefinitely,
+     * creating a 5xx-storm. To break the loop, warn and ack 200 without
+     * attempting the transition. Manual Stripe dashboard refund of a
+     * `payment_failed` Order is the supported operator path (D-DESIGN-7
+     * — no auto-refund).
      */
     async handleChargeRefunded(event: Stripe.Event) {
         const charge = event.data.object as Stripe.Charge;
@@ -160,6 +170,20 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
 
             if (order.orderStatus === 'refunded') {
                 strapi.log.info(`[REF-10] Webhook: Order ${order.orderId} is already refunded. Ignoring.`);
+                return { received: true };
+            }
+
+            // [GAP-1 PR4b T-PR4b-5] Terminal guard — `payment_failed`
+            // Orders cannot be transitioned to `refunded` (R-PFS-2).
+            // The legacy branch would otherwise throw `ApplicationError`
+            // from `beforeUpdate`, creating a permanent 5xx retry loop
+            // against the new transition matrix. Warn + ack 200 instead.
+            if (order.orderStatus === 'payment_failed') {
+                strapi.log.warn(
+                    `[GAP-1] charge.refunded on payment_failed Order ${order.orderId} ` +
+                    `(paymentIntentId=${paymentIntentId}), skipping transition. ` +
+                    `Manual refund via Stripe dashboard required.`
+                );
                 return { received: true };
             }
 

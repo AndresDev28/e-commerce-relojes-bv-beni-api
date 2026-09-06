@@ -572,7 +572,7 @@ export async function createTestOrder(data?: {
   subtotal?: number
   shipping?: number
   total?: number
-  orderStatus?: 'pending' | 'paid' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded' | 'cancellation_requested'
+  orderStatus?: 'pending' | 'paid' | 'processing' | 'shipped' | 'delivered' | 'cancelled' | 'refunded' | 'cancellation_requested' | 'payment_failed'
 }, userId?: number | string) {
   const strapi = getStrapi()
 
