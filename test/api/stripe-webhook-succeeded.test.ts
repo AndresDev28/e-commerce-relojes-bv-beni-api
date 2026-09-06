@@ -234,3 +234,213 @@ describe('[GAP-1 PR4a] payment_intent.succeeded — pending Order reconciliation
         expect(p.stock).toBe(8); // 10 - 2
     });
 });
+
+// =============================================================================
+// [GAP-1 PR4a T-PR4a-6] D+ shell creation — orphan webhook-first payments.
+// When no Order matches metadata.orderId OR paymentIntentId, the webhook
+// must create a paid shell (R-SW-4 "no Order" branch, S-SW-1). The shell
+// has empty items, is paid, has paymentInfo.source='webhook_reconciliation',
+// and connects to metadata.userId. Later enrichment (Gap #3 UPSERT) triggers
+// the stock decrement exactly once via the PR3 enrichment gate.
+// =============================================================================
+describe('[GAP-1 PR4a] payment_intent.succeeded — D+ shell creation', () => {
+    beforeEach(async () => {
+        await resetDatabase();
+        process.env.STRIPE_WEBHOOK_SECRET = 'whsec_test';
+        vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+        vi.restoreAllMocks();
+    });
+
+    async function sendSucceeded(payload: object) {
+        const strapi = getStrapi();
+        const payloadString = JSON.stringify(payload);
+        const stripe = new Stripe('sk_test_123', { apiVersion: '2026-01-28.clover' as any });
+        const signature = stripe.webhooks.generateTestHeaderString({
+            payload: payloadString,
+            secret: 'whsec_test',
+        });
+        return request(strapi.server.httpServer)
+            .post('/api/orders/stripe-webhook')
+            .set('stripe-signature', signature)
+            .set('Content-Type', 'application/json')
+            .send(payloadString);
+    }
+
+    // T-SH-1: orphan succeeded → shell Order created with the expected shape.
+    it('T-SH-1: orphan succeeded creates a paid shell with empty items + reconciliation source', async () => {
+        const strapi = getStrapi();
+
+        const user = await createTestUser({ username: 'sh1', email: 'sh1@test.com', password: 'p' });
+
+        const orderId = `SHELL-ORD-${Date.now()}`;
+        const userId = String(user.id);
+        const response = await sendSucceeded({
+            id: `evt_sh1_${Date.now()}`,
+            type: 'payment_intent.succeeded',
+            data: {
+                object: {
+                    id: 'pi_sh1',
+                    amount: 10000, // cents → $100.00
+                    metadata: { orderId, userId },
+                },
+            },
+        });
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ received: true });
+
+        // Shell exists, paid, empty items, source marker.
+        const shell: any = await strapi.documents('api::order.order').findFirst({
+            filters: { orderId } as any,
+        });
+        expect(shell).toBeDefined();
+        expect(shell.orderId).toBe(orderId);
+        expect(shell.orderStatus).toBe('paid');
+        expect(shell.items).toEqual([]);
+        expect(shell.paymentInfo?.source).toBe('webhook_reconciliation');
+        expect(parseFloat(shell.total)).toBe(100); // cents → decimal
+        expect(parseFloat(shell.subtotal)).toBe(0);
+        expect(parseFloat(shell.shipping)).toBe(0);
+        expect(shell.paymentIntentId).toBe('pi_sh1');
+    });
+
+    // T-SH-2: shell with empty items → no stock decrement.
+    it('T-SH-2: shell creation with empty items does NOT decrement stock', async () => {
+        const strapi = getStrapi();
+
+        const product = await createTestProduct({ name: `T-SH-2 ${Date.now()}`, stock: 10 });
+        const user = await createTestUser({ username: 'sh2', email: 'sh2@test.com', password: 'p' });
+
+        const orderId = `SHELL-NOSTOCK-${Date.now()}`;
+        const response = await sendSucceeded({
+            id: `evt_sh2_${Date.now()}`,
+            type: 'payment_intent.succeeded',
+            data: {
+                object: {
+                    id: 'pi_sh2',
+                    amount: 10000,
+                    metadata: { orderId, userId: String(user.id) },
+                },
+            },
+        });
+
+        expect(response.status).toBe(200);
+
+        const productAfter: any = await strapi.db.connection('products').where('id', product.id).first();
+        expect(productAfter.stock).toBe(10); // unchanged
+
+        // The shell's stockDeducted marker must remain false (no decrement).
+        const shell: any = await strapi.documents('api::order.order').findFirst({
+            filters: { orderId } as any,
+        });
+        expect(shell.stockDeducted).toBe(false);
+    });
+
+    // T-SH-3: re-delivery of same event.id → no shell re-creation, no side effects.
+    it('T-SH-3: re-delivery of same event.id is idempotent (no shell re-creation)', async () => {
+        const strapi = getStrapi();
+
+        const user = await createTestUser({ username: 'sh3', email: 'sh3@test.com', password: 'p' });
+        const orderId = `SHELL-IDEMPOTENT-${Date.now()}`;
+
+        const payload = {
+            id: `evt_sh3_${Date.now()}`,
+            type: 'payment_intent.succeeded',
+            data: {
+                object: {
+                    id: 'pi_sh3',
+                    amount: 10000,
+                    metadata: { orderId, userId: String(user.id) },
+                },
+            },
+        };
+
+        const r1 = await sendSucceeded(payload);
+        expect(r1.status).toBe(200);
+
+        // Second delivery with same event.id → duplicate → ack 200, no side effects.
+        const r2 = await sendSucceeded(payload);
+        expect(r2.status).toBe(200);
+        expect(r2.body).toEqual({ received: true });
+
+        // Exactly one Order exists with this orderId.
+        const orders: any = await strapi.entityService.findMany('api::order.order', {
+            filters: { orderId } as any,
+        });
+        expect(orders.length).toBe(1);
+
+        // Exactly one ledger row.
+        const ledger = await strapi.entityService.findMany(
+            'api::webhook-event.webhook-event',
+            { filters: { eventId: payload.id } }
+        ) as any[];
+        expect(ledger.length).toBe(1);
+    });
+
+    // T-SH-4: shell enrichment via the PR3 helper decrements stock exactly once.
+    it('T-SH-4: shell enrichment via enrichShellWithItems decrements stock once', async () => {
+        const strapi = getStrapi();
+
+        const product = await createTestProduct({ name: `T-SH-4 ${Date.now()}`, stock: 10 });
+        const user = await createTestUser({ username: 'sh4', email: 'sh4@test.com', password: 'p' });
+
+        const orderId = `SHELL-ENRICH-${Date.now()}`;
+        const payload = {
+            id: `evt_sh4_${Date.now()}`,
+            type: 'payment_intent.succeeded',
+            data: {
+                object: {
+                    id: 'pi_sh4',
+                    amount: 10000,
+                    metadata: { orderId, userId: String(user.id) },
+                },
+            },
+        };
+
+        await sendSucceeded(payload);
+
+        const shell: any = await strapi.documents('api::order.order').findFirst({
+            filters: { orderId } as any,
+        });
+
+        // Enrichment (frontend UPSERT shape; PR4a calls this directly in tests).
+        const result = await strapi
+            .service('api::order.order')
+            .enrichShellWithItems(shell.documentId, [{ id: product.id, quantity: 3 }]);
+
+        expect(result.ok).toBe(true);
+        expect(result.stockDepleted).toBe(false);
+
+        const productAfter: any = await strapi.db.connection('products').where('id', product.id).first();
+        expect(productAfter.stock).toBe(7); // 10 - 3
+    });
+
+    // T-SH-5: missing metadata.userId → warn + ack 200, NO shell created.
+    it('T-SH-5: missing metadata.userId does not create a shell (user relation required)', async () => {
+        const strapi = getStrapi();
+
+        const response = await sendSucceeded({
+            id: `evt_sh5_${Date.now()}`,
+            type: 'payment_intent.succeeded',
+            data: {
+                object: {
+                    id: 'pi_sh5',
+                    amount: 10000,
+                    metadata: { orderId: 'orphan-no-user' }, // no userId
+                },
+            },
+        });
+
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ received: true });
+
+        // No Order created.
+        const orders: any = await strapi.entityService.findMany('api::order.order', {
+            filters: { orderId: 'orphan-no-user' } as any,
+        });
+        expect(orders.length).toBe(0);
+    });
+});
