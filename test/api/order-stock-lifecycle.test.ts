@@ -200,8 +200,9 @@ describe('Order Stock Authority [GAP-1 PR3] — lifecycle marker contract', () =
         expect(after.stock).toBe(10)
     })
 
-    // T-E-2: shell enriched with items + stockDeducted=true → stock decrements once.
-    it('T-E-2: enrichment with items AND stockDeducted=true decrements stock exactly once', async () => {
+    // T-E-2: shell enriched with items via `enrichShellWithItems` helper
+    // → stock decrements exactly once AND the marker flips to true.
+    it('T-E-2: enrichShellWithItems helper decrements stock and flips stockDeducted=true', async () => {
         const strapi = getStrapi()
 
         const product = await createTestProduct({ name: `T-E-2 ${Date.now()}`, stock: 10 })
@@ -215,29 +216,35 @@ describe('Order Stock Authority [GAP-1 PR3] — lifecycle marker contract', () =
             orderStatus: 'paid',
         }, user.id)
 
-        // Enrichment: UPDATE with items + stockDeducted=true. In PR3 this
-        // is what the webhook (or a test-only helper) triggers. For now
-        // we set the marker directly so we can assert the helper wires
-        // correctly in T-PR3-7.
-        await strapi.entityService.update('api::order.order', shell.id, {
-            data: {
-                items: [{ id: product.id, quantity: 4 }],
-                stockDeducted: true,
-            },
-        })
+        // Call the helper directly (test-only entry point that mirrors
+        // what PR4a's webhook will invoke).
+        const result = await strapi
+            .service('api::order.order')
+            .enrichShellWithItems(shell.documentId, [{ id: product.id, quantity: 4 }])
+
+        expect(result.ok).toBe(true)
+        expect(result.stockDepleted).toBe(false)
 
         const after: any = await strapi.db.connection('products').where('id', product.id).first()
         expect(after.stock).toBe(6) // 10 - 4 (decrement fired)
+
+        // The marker should be flipped to true on the Order.
+        const order: any = await strapi.documents('api::order.order').findOne({
+            documentId: shell.documentId,
+        })
+        expect(order.stockDeducted).toBe(true)
     })
 
-    // T-E-3: enrichment with items but stockDeducted=false → stock MUST NOT decrement.
-    it('T-E-3: enrichment with items but stockDeducted=false does NOT decrement', async () => {
+    // T-E-2b: when the shell has its items populated by the lifecycle
+    // gate (i.e. an UPSERT that lands in afterUpdate), the gate fires
+    // and decrements once.
+    it('T-E-2b: enrichment via afterUpdate gate fires when items arrive with stockDeducted=false', async () => {
         const strapi = getStrapi()
 
-        const product = await createTestProduct({ name: `T-E-3 ${Date.now()}`, stock: 10 })
-        const user = await createTestUser({ username: 'e3', email: 'e3@test.com', password: 'p' })
+        const product = await createTestProduct({ name: `T-E-2b ${Date.now()}`, stock: 10 })
+        const user = await createTestUser({ username: 'e2b', email: 'e2b@test.com', password: 'p' })
 
-        await createTestOrder({
+        const shell = await createTestOrder({
             items: [],
             subtotal: 0,
             shipping: 0,
@@ -245,16 +252,100 @@ describe('Order Stock Authority [GAP-1 PR3] — lifecycle marker contract', () =
             orderStatus: 'paid',
         }, user.id)
 
-        const orders = await strapi.entityService.findMany('api::order.order', { filters: { orderStatus: 'paid' } }) as any[]
-        // Enrich with items but keep stockDeducted=false (a misconfig / bug).
-        await strapi.entityService.update('api::order.order', orders[0].id, {
+        // Enrichment UPDATE (frontend UPSERT shape): items arrive, status
+        // stays 'paid', stockDeducted stays false — the gate must fire.
+        await strapi.entityService.update('api::order.order', shell.id, {
             data: {
-                items: [{ id: product.id, quantity: 4 }],
-                // stockDeducted NOT flipped → marker is authoritative.
+                items: [{ id: product.id, quantity: 3 }],
+                // stockDeducted NOT touched
             },
         })
 
         const after: any = await strapi.db.connection('products').where('id', product.id).first()
-        expect(after.stock).toBe(10) // unchanged — marker gate kept the decrement out
+        expect(after.stock).toBe(7) // 10 - 3
+
+        const order: any = await strapi.documents('api::order.order').findOne({
+            documentId: shell.documentId,
+        })
+        expect(order.stockDeducted).toBe(true)
+    })
+
+    // T-E-3: re-entrant enrichment (helper called twice with the same
+    // items) is idempotent — stock decrements exactly once because the
+    // CAS on `stockDeducted` blocks the second claim.
+    it('T-E-3: re-entrant enrichment (helper called twice) is exactly-once via CAS', async () => {
+        const strapi = getStrapi()
+
+        const product = await createTestProduct({ name: `T-E-3 ${Date.now()}`, stock: 10 })
+        const user = await createTestUser({ username: 'e3', email: 'e3@test.com', password: 'p' })
+
+        const shell = await createTestOrder({
+            items: [],
+            subtotal: 0,
+            shipping: 0,
+            total: 100,
+            orderStatus: 'paid',
+        }, user.id)
+
+        // Two concurrent calls to enrichShellWithItems. Only one should
+        // claim the marker; the other is a no-op.
+        const [r1, r2] = await Promise.all([
+            strapi.service('api::order.order').enrichShellWithItems(shell.documentId, [
+                { id: product.id, quantity: 2 },
+            ]),
+            strapi.service('api::order.order').enrichShellWithItems(shell.documentId, [
+                { id: product.id, quantity: 2 },
+            ]),
+        ])
+
+        // Exactly one ok:true, one ok:false (idempotent skip).
+        const okCount = [r1, r2].filter((r) => r.ok).length
+        expect(okCount).toBe(1)
+
+        const after: any = await strapi.db.connection('products').where('id', product.id).first()
+        expect(after.stock).toBe(8) // 10 - 2 (exactly once)
+    })
+
+    // T-E-4: depleted stock at enrichment time → order transitions to
+    // `payment_failed` with audit, no automatic refund (S-OSA-6).
+    it('T-E-4: depleted stock at enrichment → payment_failed with stock_depleted audit', async () => {
+        const strapi = getStrapi()
+
+        const product = await createTestProduct({ name: `T-E-4 ${Date.now()}`, stock: 1 })
+        const user = await createTestUser({ username: 'e4', email: 'e4@test.com', password: 'p' })
+
+        const shell = await createTestOrder({
+            items: [],
+            subtotal: 0,
+            shipping: 0,
+            total: 100,
+            orderStatus: 'paid',
+        }, user.id)
+
+        // Request more than available (1 in stock, 5 requested).
+        const result = await strapi
+            .service('api::order.order')
+            .enrichShellWithItems(shell.documentId, [
+                { id: product.id, quantity: 5 },
+            ])
+
+        expect(result.ok).toBe(false)
+        expect(result.stockDepleted).toBe(true)
+        expect(result.transitionedTo).toBe('payment_failed')
+
+        // Stock was decremented partially? No — guard prevents the
+        // decrement when stock < qty. Stock stays at 1.
+        const after: any = await strapi.db.connection('products').where('id', product.id).first()
+        expect(after.stock).toBe(1)
+
+        // Order transitioned to payment_failed with audit.
+        const order: any = await strapi.documents('api::order.order').findOne({
+            documentId: shell.documentId,
+        })
+        expect(order.orderStatus).toBe('payment_failed')
+        expect(order.paymentInfo?.paymentError?.code).toBe('stock_depleted')
+        expect(order.paymentInfo?.paymentError?.failure_message).toContain('Insufficient stock')
+        // Marker MUST remain false — we never deducted.
+        expect(order.stockDeducted).toBe(false)
     })
 })

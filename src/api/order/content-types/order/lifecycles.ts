@@ -276,6 +276,76 @@ export default {
 
       strapi.log.info(`[ORD-22/33] afterUpdate: Order ${result.orderId} | previousStatus = ${previousStatus} | newStatus = ${newStatus} | hasState = ${!!event.state}`)
 
+      // [GAP-1 PR3 T-PR3-7] Webhook enrichment gate. Fires when an Order
+      // was created as a shell (or with empty items) by the webhook and
+      // is later enriched by a frontend UPSERT (Gap #3 follow-up). The
+      // gate is what makes the stock decrement authoritative:
+      //   - orderStatus === 'paid' (already authorized)
+      //   - stockDeducted === false (no claim yet)
+      //   - items have at least one entry with a product `id` (the
+      //     actual webhook enrichment shape; legacy client-first items
+      //     keyed by `productId` are NOT enrichment updates and must
+      //     fall through to the normal status-history + email path)
+      //   - items.length > 0 (now we know what to decrement)
+      // The helper is CAS-idempotent, so concurrent enrichment calls
+      // decrement exactly once. After the gate fires, we early-return
+      // to avoid duplicate status-history/email side effects on the
+      // enrichment update (status didn't change; D-DESIGN-7 dedup row 3).
+      const hasDecrementableItems =
+        Array.isArray(result.items) &&
+        result.items.length > 0 &&
+        result.items.some((item: any) => item.id && item.quantity)
+
+      const isEnrichmentUpdate =
+        newStatus === 'paid' &&
+        result.stockDeducted === false &&
+        hasDecrementableItems
+
+      if (isEnrichmentUpdate) {
+        strapi.log.info(`[GAP-1] Webhook enrichment gate fired for order ${result.orderId}`)
+        const enrichResult = await strapi
+          .service('api::order.order')
+          .decrementStockOnce({
+            id: result.id,
+            documentId: result.documentId,
+            stockDeducted: false,
+            items: result.items,
+          })
+
+        if (enrichResult.ok) {
+          strapi.log.info(`[GAP-1] Enrichment decremented stock for order ${result.orderId}`)
+        } else if (enrichResult.stockDepleted) {
+          strapi.log.warn(
+            `[GAP-1] Enrichment depleted stock for order ${result.orderId}, transitioning to payment_failed`
+          )
+          try {
+            await strapi.documents('api::order.order').update({
+              documentId: result.documentId,
+              data: {
+                orderStatus: 'payment_failed',
+                statusChangeNote: 'Stock depleted during payment confirmation; manual refund required',
+                paymentInfo: {
+                  ...(result.paymentInfo || {}),
+                  paymentError: {
+                    code: 'stock_depleted',
+                    failure_message: 'Insufficient stock to confirm payment',
+                  },
+                },
+              },
+            } as any)
+          } catch (transitionError) {
+            strapi.log.error(
+              `[GAP-1] Failed to transition order ${result.orderId} to payment_failed after enrichment depletion`,
+              transitionError
+            )
+          }
+        }
+
+        // Early-return: enrichment updates don't change status, so we
+        // skip history/email/restoration side-effects.
+        return
+      }
+
       if (previousStatus === newStatus) {
         strapi.log.debug(`[ORD-22/33] Order ${result.orderId}: orderStatus unchanged (${newStatus}), skipping history and email`);
         return;

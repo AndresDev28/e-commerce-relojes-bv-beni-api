@@ -151,5 +151,217 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
             strapi.log.error(`[REF-09] Failed to update stock for product ${productId}:`, error.message);
             return false;
         }
-    }
+    },
+
+    /**
+     * [GAP-1 PR3 T-PR3-7] `decrementStockOnce` — the stock-authority
+     * idempotent claim. Combines:
+     *   - A CAS on the Order's `stockDeducted` marker (claim only if
+     *     currently false; idempotent across concurrent enrichment calls
+     *     and webhook re-deliveries).
+     *   - A guarded per-item atomic decrement via `updateProductStock`.
+     *   - If ANY item fails the guard (insufficient stock), the marker
+     *     is reverted to false and the function returns `{ ok: false,
+     *     stockDepleted: true, failedItem }`. The caller (the webhook
+     *     enrichment gate) is responsible for transitioning the Order to
+     *     `payment_failed` and logging the audit.
+     *
+     * The CAS-then-decrement-then-revert pattern is what makes the
+     * helper race-safe under concurrent calls:
+     *   - The CAS UPDATE WHERE `stockDeducted = false` SET `stockDeducted
+     *     = true` is a single atomic statement — only one concurrent
+     *     caller will see `affected = 1`.
+     *   - The second caller sees `affected = 0` and is a no-op.
+     *   - On decrement failure, the marker is reverted so the next call
+     *     (e.g. from a Stripe retry) can re-attempt.
+     *
+     * Returns `{ ok: true }` on a successful one-shot decrement,
+     * `{ ok: false, stockDepleted: true, failedItem }` on guard failure,
+     * `{ ok: false, stockDepleted: false }` if the marker was already
+     * true (no-op).
+     */
+    async decrementStockOnce(
+        order: { id: number | string; documentId?: string; stockDeducted: boolean; items: any[] },
+        opts?: { trx?: any }
+    ): Promise<{ ok: boolean; stockDepleted: boolean; failedItem?: any }> {
+        try {
+            if (!order.items || !Array.isArray(order.items) || order.items.length === 0) {
+                return { ok: false, stockDepleted: false };
+            }
+
+            // [GAP-1 PR3 T-PR3-7] CAS claim: flip the marker from false
+            // to true atomically. Only one concurrent caller wins. We
+            // join the ambient ALS transaction when one is active so
+            // the UPDATE doesn't deadlock against the row lock held
+            // by the surrounding `strapi.db.transaction` (e.g. the
+            // Document Service wrapper around afterUpdate).
+            //
+            // [GAP-1 PR3 T-PR3-7] Column-name note: the DB stores
+            // `stock_deducted` (snake_case) — Strapi's Query Engine
+            // auto-converts camelCase ↔ snake_case for entityService
+            // and documents, but raw knex queries must use the DB
+            // column name explicitly.
+            const ambientTrx = opts?.trx ?? transactionContext.transactionCtx.get();
+
+            const claimBuilder = (ambientTrx ?? strapi.db.connection)('orders')
+                .where('id', order.id)
+                .where('stock_deducted', false)
+                .update({ stock_deducted: true });
+
+            if (ambientTrx) {
+                claimBuilder.transacting(ambientTrx);
+            }
+
+            const claimed: number = await claimBuilder;
+
+            if (claimed === 0) {
+                // Someone else won the CAS race (or the marker was
+                // already true from a prior successful enrichment).
+                return { ok: false, stockDepleted: false };
+            }
+
+            // Per-item guarded decrement. Stop at first failure.
+            for (const item of order.items) {
+                if (!item.id || !item.quantity) continue;
+                const ok = await this.updateProductStock(item.id, -item.quantity, opts);
+                if (!ok) {
+                    strapi.log.warn(
+                        `[GAP-1] Stock depleted during enrichment, orderId=${order.id}, ` +
+                        `productId=${item.id}, requested=${item.quantity}`
+                    );
+                    // [GAP-1 PR3 T-PR3-7] Revert the marker so the next
+                    // call (e.g. operator-triggered retry after
+                    // restock) can re-attempt.
+                    await this.revertStockDeductedMarker(order.id, opts);
+                    return { ok: false, stockDepleted: true, failedItem: item };
+                }
+            }
+
+            return { ok: true, stockDepleted: false };
+        } catch (error: any) {
+            // [GAP-1 PR3 T-PR3-7] diagnostic logging for unexpected throws.
+            const diag = `[GAP-1] decrementStockOnce failed for order ${order.id}: ` +
+                `type=${typeof error} msg=${error?.message} val=${JSON.stringify(error)} ` +
+                `stack=${error?.stack}`;
+            strapi.log.error(diag);
+            // Also console.error so vitest captures it even if strapi.log is muted.
+            // eslint-disable-next-line no-console
+            console.error('[GAP-1] decrementStockOnce failure:', diag);
+            return { ok: false, stockDepleted: false };
+        }
+    },
+
+    /**
+     * [GAP-1 PR3 T-PR3-7] Internal helper to revert the `stockDeducted`
+     * marker after a depleted-stock failure inside `decrementStockOnce`.
+     * Best-effort: a failed revert is logged but does not propagate,
+     * because the operator path (manual retry after restock) only needs
+     * eventual consistency. Joins the ambient ALS transaction when one
+     * is active. Uses the snake_case DB column (`stock_deducted`).
+     */
+    async revertStockDeductedMarker(orderId: number | string, opts?: { trx?: any }): Promise<void> {
+        try {
+            const ambientTrx = opts?.trx ?? transactionContext.transactionCtx.get();
+
+            if (ambientTrx) {
+                await ambientTrx('orders').where('id', orderId).update({ stock_deducted: false });
+            } else {
+                await strapi.db.connection('orders').where('id', orderId).update({ stock_deducted: false });
+            }
+        } catch (error) {
+            strapi.log.error(
+                `[GAP-1] CRITICAL: failed to revert stock_deducted marker for order ${orderId}`,
+                error
+            );
+        }
+    },
+
+    /**
+     * [GAP-1 PR3 T-PR3-7] Test-only entry point that wires the webhook
+     * enrichment flow without requiring a full Stripe webhook dispatch.
+     * PR4a will wire the same `decrementStockOnce` logic into the real
+     * `payment_intent.succeeded` handler.
+     *
+     * The enrichment contract:
+     *   1. Read the current Order (by documentId).
+     *   2. Assert `stockDeducted === false` — idempotent.
+     *   3. Call `decrementStockOnce` for each item.
+     *   4. On success: flip the marker via Document Service.
+     *   5. On stock depletion: store `paymentInfo.paymentError = { code,
+     *      failure_message }` and transition the Order to `payment_failed`
+     *      with an audit note. No automatic refund (manual path per
+     *      design D-DESIGN-7 / scenario S-OSA-6).
+     */
+    async enrichShellWithItems(
+        documentId: string,
+        items: any[],
+        opts?: { paymentIntentId?: string }
+    ): Promise<{ ok: boolean; stockDepleted: boolean; transitionedTo?: string }> {
+        try {
+            const order: any = await strapi.documents('api::order.order').findOne({
+                documentId,
+            });
+
+            if (!order) {
+                strapi.log.warn(`[GAP-1] enrichShellWithItems: order ${documentId} not found`);
+                return { ok: false, stockDepleted: false };
+            }
+
+            if (order.stockDeducted) {
+                // Idempotent — already enriched.
+                return { ok: false, stockDepleted: false };
+            }
+
+            const result = await this.decrementStockOnce({
+                id: order.id,
+                documentId,
+                stockDeducted: order.stockDeducted,
+                items,
+            });
+
+            if (result.ok) {
+                // The marker flip inside decrementStockOnce already persisted.
+                return { ok: true, stockDepleted: false };
+            }
+
+            if (result.stockDepleted) {
+                // S-OSA-6: depleted stock during enrichment. Mark the order
+                // payment_failed with an audit note. No automatic refund —
+                // operator handles via Stripe dashboard per D-DESIGN-7.
+                strapi.log.warn(
+                    `[GAP-1] Stock depleted during enrichment, paymentIntentId=${opts?.paymentIntentId || 'n/a'}, ` +
+                    `order=${order.orderId}, transitioning to payment_failed`
+                );
+
+                try {
+                    await strapi.documents('api::order.order').update({
+                        documentId,
+                        data: {
+                            orderStatus: 'payment_failed',
+                            statusChangeNote: 'Stock depleted during payment confirmation; manual refund required',
+                            paymentInfo: {
+                                ...(order.paymentInfo || {}),
+                                paymentError: {
+                                    code: 'stock_depleted',
+                                    failure_message: 'Insufficient stock to confirm payment',
+                                },
+                            },
+                        },
+                    });
+                } catch (transitionError) {
+                    strapi.log.error(
+                        `[GAP-1] Failed to transition order ${order.orderId} to payment_failed after stock depletion`,
+                        transitionError
+                    );
+                }
+
+                return { ok: false, stockDepleted: true, transitionedTo: 'payment_failed' };
+            }
+
+            return { ok: false, stockDepleted: false };
+        } catch (error: any) {
+            strapi.log.error(`[GAP-1] enrichShellWithItems failed for ${documentId}:`, error.message);
+            return { ok: false, stockDepleted: false };
+        }
+    },
 }));
