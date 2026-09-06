@@ -154,6 +154,24 @@ export default {
    * afterCreate hook
    * [ORD-33] Create initial status history entry when order is created
    * [REF-09] Decrement product stock
+   * [GAP-1 PR4a T-PR4a-7] Email exactly-once across shell + enrichment.
+   *
+   * Email dedup contract (D-DESIGN-7):
+   *   - Shell created by the webhook (`payment_intent.succeeded` with no
+   *     matching Order, see `services/stripe-webhook.ts:handlePaymentIntentSucceeded`)
+   *     has `orderStatus: 'paid'` and `items: []`. The condition below
+   *     fires `sendOrderEmailWebhook(..., isNewOrder: true)` ONCE here.
+   *   - When the frontend UPSERT enriches the shell with items later
+   *     (Gap #3 follow-up), `afterUpdate` sees `previousStatus ===
+   *     newStatus === 'paid'` and the early-return at line ~349 below
+   *     skips history/email/restoration. NO duplicate initial-purchase
+   *     email is sent.
+   *   - For client-first orders (`pending` → webhook transition → `paid`),
+   *     `afterCreate` here sends NO email (gate: orderStatus !== paid
+   *     when pending). The status-change email fires at `afterUpdate`
+   *     with `isNewOrder: false`.
+   *   - Net effect: every Order gets exactly one initial-purchase email,
+   *     regardless of arrival order.
    */
   async afterCreate(event) {
     const { result } = event
