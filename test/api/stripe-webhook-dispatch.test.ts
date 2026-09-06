@@ -67,10 +67,14 @@ describe('[GAP-1 PR4a] Stripe Webhook Dispatcher', () => {
     });
 
     // T-D-2: payment_intent.payment_failed must be routed to the handler
-    // (the dispatcher calls handlePaymentIntentPaymentFailed). The handler
-    // is a throws-stub in PR4a (real implementation ships in PR4b), so
-    // the controller surfaces 500 with the "not implemented" message.
-    it('T-D-2: payment_intent.payment_failed routes to handlePaymentIntentPaymentFailed (throws-stub → 500)', async () => {
+    // (the dispatcher calls handlePaymentIntentPaymentFailed).
+    //
+    // [GAP-1 PR4b T-PR4b-1] PR4a shipped a throws-stub (controller → 500)
+    // to make the missing implementation surface as a Stripe retry. PR4b
+    // replaces the stub with a real skeleton (returns `{ received: true }`).
+    // The dispatcher contract is unchanged: the event flows to the
+    // handler; the handler is now expected to ack 200.
+    it('T-D-2: payment_intent.payment_failed routes to handlePaymentIntentPaymentFailed and returns 200', async () => {
         const payload = JSON.stringify({
             id: 'evt_dispatch_failed',
             type: 'payment_intent.payment_failed',
@@ -83,9 +87,9 @@ describe('[GAP-1 PR4a] Stripe Webhook Dispatcher', () => {
         });
 
         const response = await postWebhook(payload);
-        // Throws-stub surfaces 500; message contains the stub marker.
-        expect(response.status).toBe(500);
-        expect(response.text).toContain('not implemented: handlePaymentIntentPaymentFailed');
+        // [GAP-1 PR4b T-PR4b-1] Skeleton returns `{ received: true }`.
+        expect(response.status).toBe(200);
+        expect(response.body).toEqual({ received: true });
     });
 
     // T-D-3: charge.refunded continues to call handleChargeRefunded (existing path).

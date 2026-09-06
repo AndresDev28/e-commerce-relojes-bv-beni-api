@@ -76,6 +76,19 @@ export interface WebhookEmailPayload {
  *     fired from `services/order.ts:enrichShellWithItems` /
  *     `lifecycles.ts:afterUpdate` enrichment gate. Manual refunds (via
  *     Stripe dashboard) follow up.
+ *
+ * [GAP-1 PR4b T-PR4b-3] Add the cancellation→payment_failed edge:
+ *   - `cancellation_requested → payment_failed` is now allowed because a
+ *     realistic scenario is: customer requested cancellation, but the
+ *     Stripe charge failed in parallel. The webhook arrives after the
+ *     cancel request, and the Order is in `cancellation_requested`. We
+ *     honor the payment outcome over the cancel-request intent: the
+ *     Order moves to `payment_failed` (user-friendly: "your payment was
+ *     declined, please retry") rather than completing the cancellation
+ *     or staying in a request state. R-PFS-2 does NOT forbid this edge
+ *     (it lists the MUST-allow edges as a minimum, not an exhaustive
+ *     enumeration). The handler treats `pending | cancellation_requested`
+ *     symmetrically.
  */
 const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
     pending: [
@@ -87,7 +100,7 @@ const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
     ],
     paid: ['processing', 'cancelled', 'refunded', 'cancellation_requested', 'payment_failed'],
     processing: ['shipped', 'cancelled', 'refunded', 'cancellation_requested'],
-    cancellation_requested: ['cancelled', 'refunded', 'processing'],
+    cancellation_requested: ['cancelled', 'refunded', 'processing', 'payment_failed'],
     shipped: ['delivered', 'cancelled', 'refunded', 'processing'],
     delivered: ['processing'], // Allow revert if shipment fails after delivery
     cancelled: [],
