@@ -74,6 +74,18 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
             return this.handleChargeRefunded(event);
         }
 
+        // Extract correlation fields from the event payload for the
+        // ledger row (D-DESIGN-3). `paymentIntentId` is on the
+        // PaymentIntent; `orderId` lives in metadata; for charge-style
+        // events it falls through to nulls.
+        const obj: any = event.data?.object || {};
+        const paymentIntentId =
+            typeof obj.id === 'string' && event.type.startsWith('payment_intent')
+                ? obj.id
+                : null;
+        const orderIdFromMetadata =
+            (obj.metadata && (obj.metadata as any).orderId) || null;
+
         // [GAP-1 PR4a T-PR4a-3] Ledger-first transactional envelope.
         // The unique `eventId` violation is the detection path for
         // duplicate deliveries (R-SW-3 / S-SW-9); on violation we
@@ -85,9 +97,11 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
                     data: {
                         eventId: event.id,
                         eventType: event.type,
+                        paymentIntentId: paymentIntentId || undefined,
+                        orderId: orderIdFromMetadata || undefined,
                         processedAt: new Date().toISOString(),
                         outcome: 'processed',
-                    },
+                    } as any,
                 });
             } catch (ledgerErr: any) {
                 const msg = String(ledgerErr?.message || ledgerErr);
@@ -273,19 +287,46 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
         // Service lifecycle (afterCreate records `null → paid` history
         // and fires the initial-purchase email exactly once; no stock
         // decrement because items are empty).
-        await strapi.documents('api::order.order').create({
-            data: {
-                orderId: orderIdFromMetadata,
-                paymentIntentId,
-                total: amount / 100,
-                subtotal: 0,
-                shipping: 0,
-                orderStatus: 'paid',
-                items: [],
-                paymentInfo: { source: 'webhook_reconciliation' },
-                user: { connect: [userIdFromMetadata] } as any,
-            } as any,
-        });
+        try {
+            await strapi.documents('api::order.order').create({
+                data: {
+                    orderId: orderIdFromMetadata,
+                    paymentIntentId,
+                    total: amount / 100,
+                    subtotal: 0,
+                    shipping: 0,
+                    orderStatus: 'paid',
+                    items: [],
+                    paymentInfo: { source: 'webhook_reconciliation' },
+                    user: { connect: [userIdFromMetadata] } as any,
+                } as any,
+            });
+        } catch (shellErr: any) {
+            // [GAP-1 PR4a T-PR4a-9] Graceful fallback when the shell
+            // creation fails (e.g. userId doesn't resolve to a real
+            // user, or the orderId already exists). Log a warning and
+            // ack 200 — never NACK a Stripe webhook that already passed
+            // signature verification.
+            strapi.log.warn(
+                `[GAP-1] Shell creation failed for orderId=${orderIdFromMetadata} ` +
+                `userId=${userIdFromMetadata}: ${(shellErr as any).message || shellErr}. ` +
+                `Ack 200 — operator must reconcile manually.`
+            );
+            // Update the ledger row to outcome=unmatched so ops can see
+            // the unfulfilled event.
+            try {
+                await strapi.documents('api::webhook-event.webhook-event').update({
+                    documentId: event.id,
+                    data: {
+                        outcome: 'unmatched',
+                        errorMessage: `Shell creation failed: ${(shellErr as any).message || 'unknown'}`,
+                    } as any,
+                });
+            } catch (_updateErr) {
+                // Ledger update is best-effort; the original ledger row
+                // still has outcome=processed.
+            }
+        }
 
         return { received: true };
     },

@@ -675,6 +675,10 @@ export async function cleanupContent() {
     const orders = await strapi.entityService.findMany('api::order.order')
     const products = await strapi.entityService.findMany('api::product.product')
     const categories = await strapi.entityService.findMany('api::category.category')
+    // [GAP-1 PR4a] Also clear the private webhook_events ledger so the
+    // unique `eventId` constraint doesn't accumulate across test runs
+    // and break idempotency assertions.
+    const webhookEvents = await strapi.entityService.findMany('api::webhook-event.webhook-event')
 
     // Eliminar en orden correcto (dependencias primero)
     for (const shipment of shipments) {
@@ -693,7 +697,11 @@ export async function cleanupContent() {
       await strapi.entityService.delete('api::category.category', category.id)
     }
 
-    console.log(`🗑️ Cleaned up ${shipments.length} shipments, ${orders.length} orders, ${products.length} products, ${categories.length} categories`)
+    for (const we of webhookEvents) {
+      await strapi.entityService.delete('api::webhook-event.webhook-event', (we as any).id)
+    }
+
+    console.log(`🗑️ Cleaned up ${shipments.length} shipments, ${orders.length} orders, ${products.length} products, ${categories.length} categories, ${webhookEvents.length} webhook_events`)
   } catch (error) {
     console.error('Error cleaning up content:', error)
   }
