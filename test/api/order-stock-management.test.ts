@@ -260,3 +260,98 @@ describe('Order Stock Management ([REF-09])', () => {
         expect(finalProduct.stock).toBe(2)
     })
 })
+
+// =============================================================================
+// [GAP-1 PR3 T-PR3-2] Atomic `updateProductStock` contract — RED tests
+// These tests specify the new atomic, idempotent helper that replaces the
+// read-then-write implementation. They will FAIL against the current
+// implementation because:
+//   - The current helper returns void (not `true`/`false`).
+//   - The current helper uses `Math.max(0, …)` which silently floors stock to
+//     zero on insufficient decrement (no guard).
+//   - The current helper reads-then-writes — concurrent decrements can race
+//     on the read snapshot.
+// They turn GREEN in T-PR3-3 when the SQL is rewritten as a single guarded
+// `UPDATE products SET stock = stock + ? WHERE id = ? AND stock >= ?`.
+// =============================================================================
+describe('Order Stock Management [GAP-1 PR3] — Atomic updateProductStock', () => {
+    beforeEach(async () => {
+        await resetDatabase()
+    })
+
+    // T-H-1: a single decrement returns true and reduces stock by exactly qty.
+    it('T-H-1: single atomic decrement returns true and reduces stock by exactly qty', async () => {
+        const strapi = getStrapi()
+        const product = await createTestProduct({ name: `T-H-1 ${Date.now()}`, stock: 10 })
+
+        const result = await strapi.service('api::order.order').updateProductStock(product.id, -3)
+
+        expect(result).toBe(true)
+        const after = await strapi.entityService.findOne('api::product.product', product.id)
+        expect(after.stock).toBe(7) // 10 - 3
+    })
+
+    // T-H-2: concurrent decrements serialize correctly via the WHERE guard.
+    // better-sqlite3 is single-threaded so the read-then-write impl happens
+    // to pass on SQLite, but the atomic UPDATE with stock >= qty is what
+    // makes this safe on Postgres with N concurrent connections.
+    it('T-H-2: parallel decrements never oversell and never produce lost updates', async () => {
+        const strapi = getStrapi()
+        const product = await createTestProduct({ name: `T-H-2 ${Date.now()}`, stock: 100 })
+
+        const decrements = Array.from({ length: 10 }, () => () =>
+            strapi.service('api::order.order').updateProductStock(product.id, -3)
+        )
+        const results = await Promise.all(decrements.map((fn) => fn()))
+
+        // 10 successful decrements of 3 from stock 100 → stock 70, no losses.
+        const successCount = results.filter((r) => r === true).length
+        expect(successCount).toBe(10)
+        const after = await strapi.entityService.findOne('api::product.product', product.id)
+        expect(after.stock).toBe(70) // 100 - 10*3
+    })
+
+    // T-H-3: insufficient stock guard. Stock MUST stay unchanged (NOT be
+    // silently floored to zero), and the helper MUST return false.
+    it('T-H-3: insufficient stock guard returns false and leaves stock unchanged', async () => {
+        const strapi = getStrapi()
+        const product = await createTestProduct({ name: `T-H-3 ${Date.now()}`, stock: 5 })
+
+        const result = await strapi.service('api::order.order').updateProductStock(product.id, -100)
+
+        expect(result).toBe(false)
+        const after = await strapi.entityService.findOne('api::product.product', product.id)
+        expect(after.stock).toBe(5) // unchanged
+    })
+
+    // T-H-4: a positive quantity restores stock unconditionally (no guard).
+    it('T-H-4: positive quantity restores stock and is concurrency-safe', async () => {
+        const strapi = getStrapi()
+        const product = await createTestProduct({ name: `T-H-4 ${Date.now()}`, stock: 0 })
+
+        const restores = Array.from({ length: 5 }, () => () =>
+            strapi.service('api::order.order').updateProductStock(product.id, +2)
+        )
+        const results = await Promise.all(restores.map((fn) => fn()))
+
+        expect(results.every((r) => r === true)).toBe(true)
+        const after = await strapi.entityService.findOne('api::product.product', product.id)
+        expect(after.stock).toBe(10) // 0 + 5*2
+    })
+
+    // T-H-5: round-trip — decrement then restore returns the original stock.
+    it('T-H-5: decrement then restore returns stock to its original value', async () => {
+        const strapi = getStrapi()
+        const product = await createTestProduct({ name: `T-H-5 ${Date.now()}`, stock: 8 })
+
+        const dec = await strapi.service('api::order.order').updateProductStock(product.id, -4)
+        expect(dec).toBe(true)
+        const mid = await strapi.entityService.findOne('api::product.product', product.id)
+        expect(mid.stock).toBe(4)
+
+        const inc = await strapi.service('api::order.order').updateProductStock(product.id, +4)
+        expect(inc).toBe(true)
+        const final = await strapi.entityService.findOne('api::product.product', product.id)
+        expect(final.stock).toBe(8) // round-trip back to original
+    })
+})
