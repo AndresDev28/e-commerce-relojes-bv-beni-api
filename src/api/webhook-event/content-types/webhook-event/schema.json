@@ -1,0 +1,45 @@
+{
+  "kind": "collectionType",
+  "collectionName": "webhook_events",
+  "info": {
+    "singularName": "webhook-event",
+    "pluralName": "webhook-events",
+    "displayName": "WebhookEvent"
+  },
+  "options": {
+    "draftAndPublish": false
+  },
+  "pluginOptions": {},
+  "attributes": {
+    "eventId": {
+      "type": "string",
+      "required": true,
+      "unique": true
+    },
+    "eventType": {
+      "type": "string",
+      "required": true
+    },
+    "paymentIntentId": {
+      "type": "string"
+    },
+    "orderId": {
+      "type": "string"
+    },
+    "processedAt": {
+      "type": "datetime",
+      "required": true
+    },
+    "outcome": {
+      "type": "enumeration",
+      "required": true,
+      "enum": [
+        "processed",
+        "unmatched"
+      ]
+    },
+    "errorMessage": {
+      "type": "text"
+    }
+  }
+}

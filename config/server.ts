@@ -17,4 +17,11 @@ export default ({ env }) => ({
   webhooks: {
     populateRelations: env.bool("WEBHOOKS_POPULATE_RELATIONS", false),
   },
+  // [GAP-1 PR1+2] Cron enabled by default in dev/prod so the
+  // webhook_events retention sweep runs daily. Tests set
+  // STRAPI_DISABLE_CRON=true to skip startup scheduling — see
+  // test/helpers/strapi-test-helpers.ts.
+  cron: {
+    enabled: env.bool("CRON_ENABLED", true),
+  },
 });
