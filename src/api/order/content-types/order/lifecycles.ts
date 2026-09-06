@@ -171,21 +171,13 @@ export default {
         changedByEmail
       )
 
-      // 2. [REF-09] Decrement stock for each item in the order
-      // We only decrement if the order is NOT already cancelled (e.g., failed immediately)
-      // [GAP-1 PR3 T-PR3-1 seam] This block will be REMOVED in T-PR3-5
-      // (the design moves stock decrement authority to the webhook enrichment
-      // gate). The status-history and email blocks below remain.
+      // 2. [REF-09][GAP-1 PR3 T-PR3-5] Decrement block REMOVED.
+      // Stock authority moved to the webhook (`payment_intent.succeeded`
+      // handler in PR4a via the `decrementStockOnce` helper). The
+      // status-history creation (above) and the initial-purchase email
+      // (below) remain — they fire for both client-created and
+      // webhook-created orders with no stock side effect.
       if (result.orderStatus !== 'cancelled' && result.items && Array.isArray(result.items)) {
-        strapi.log.info(`[REF-09] Order ${result.orderId} created: Decrementing stock for ${result.items.length} items`);
-
-        for (const item of result.items) {
-          if (item.id && item.quantity) {
-            // quantity is positive, so quantityChange is -item.quantity
-            await strapi.service('api::order.order').updateProductStock(item.id, -item.quantity);
-          }
-        }
-
         // 3. Send initial purchase email webhook to frontend
         await sendOrderEmailWebhook(strapi, result, result.orderStatus, null, null, true);
       }
@@ -307,16 +299,18 @@ export default {
         statusChangeNote
       )
 
-      // 4. [REF-09] Restore stock if status changed to 'cancelled' or 'refunded'
-      // [GAP-1 PR3 T-PR3-1 seam] This block will be GATED in T-PR3-5 by
-      // `result.stockDeducted === true` so phantom restoration is impossible
-      // (S-PFS-3 cancel-after-failure must not restore un-deducted stock).
+      // 4. [REF-09][GAP-1 PR3 T-PR3-5] Restore stock if status changed to
+      // 'cancelled' or 'refunded' AND stock was previously deducted. The
+      // `stockDeducted` marker (set true ONLY by the webhook enrichment
+      // gate) prevents phantom restoration on Orders whose stock was
+      // never decremented — covering S-PFS-3 (`payment_failed →
+      // cancelled`) and any shell or paid-order that was never enriched.
       const refundTargetStatuses = ['cancelled', 'refunded'];
       const isNowRefunded = refundTargetStatuses.includes(newStatus);
       const wasAlreadyRefunded = refundTargetStatuses.includes(previousStatus);
 
-      if (isNowRefunded && !wasAlreadyRefunded) {
-        strapi.log.info(`[REF-09] Order ${result.orderId} status changed to ${newStatus}: Restoring stock`);
+      if (isNowRefunded && !wasAlreadyRefunded && result.stockDeducted === true) {
+        strapi.log.info(`[REF-09] Order ${result.orderId} status changed to ${newStatus}: Restoring stock (was deducted)`);
 
         if (result.items && Array.isArray(result.items)) {
           for (const item of result.items) {
@@ -325,6 +319,17 @@ export default {
               await strapi.service('api::order.order').updateProductStock(item.id, item.quantity);
             }
           }
+        }
+
+        // [GAP-1 PR3 T-PR3-5] Clear the marker so a second cancel/refund
+        // (e.g. cancelled → refunded) does not double-restore.
+        try {
+          await strapi.db.query('api::order.order').updateMany({
+            where: { id: result.id },
+            data: { stockDeducted: false },
+          } as any);
+        } catch (clearError) {
+          strapi.log.warn(`[GAP-1] Failed to clear stockDeducted marker after restore for order ${result.orderId}`, clearError);
         }
       }
 
