@@ -180,6 +180,7 @@ describe('Order API Security - Lifecycle Hooks (beforeCreate)', () => {
           shipping: 10,
           total: 110,
           orderStatus: 'pending' as 'pending',
+          stockDeducted: false, // [GAP-1 PR1+2]
           user: { connect: [user.id] } as any,
           publishedAt: new Date().toISOString(),
         },
@@ -211,6 +212,7 @@ describe('Order API Security - Lifecycle Hooks (beforeCreate)', () => {
           shipping: 0,
           total: 0,
           orderStatus: 'pending' as 'pending',
+          stockDeducted: false, // [GAP-1 PR1+2]
           user: { connect: [user.id] } as any,
           publishedAt: new Date().toISOString(),
         },

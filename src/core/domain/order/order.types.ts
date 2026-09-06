@@ -18,7 +18,8 @@ export type OrderStatus =
     | 'delivered'
     | 'cancelled'
     | 'refunded'
-    | 'cancellation_requested';
+    | 'cancellation_requested'
+    | 'payment_failed';
 
 export interface RefundPayload {
     paymentIntentId: string;
@@ -58,6 +59,11 @@ export interface WebhookEmailPayload {
  *
  * Active states: pending, paid, processing, shipped, cancellation_requested, delivered
  * Terminal states: cancelled, refunded
+ *
+ * [GAP-1 PR1+2] `payment_failed` is added to the vocabulary but treated as
+ * terminal here in the SETUP slice. The full transition matrix
+ * (`pending → payment_failed`, `payment_failed → pending`, `payment_failed →
+ * cancelled`) is introduced in T-PR1+2-7 (GREEN) and locked by R-PFS-2.
  */
 const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
     pending: ['paid', 'cancelled', 'refunded', 'cancellation_requested'],
@@ -68,6 +74,7 @@ const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
     delivered: ['processing'], // Allow revert if shipment fails after delivery
     cancelled: [],
     refunded: [],
+    payment_failed: [],
 };
 
 /**

@@ -22,7 +22,8 @@
         "shipped",
         "delivered",
         "cancelled",
-        "refunded"
+        "refunded",
+        "payment_failed"
       ]
     },
     "toStatus": {
@@ -35,7 +36,8 @@
         "shipped",
         "delivered",
         "cancelled",
-        "refunded"
+        "refunded",
+        "payment_failed"
       ]
     },
     "changedAt": {

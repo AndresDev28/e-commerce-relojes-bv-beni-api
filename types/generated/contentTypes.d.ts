@@ -385,7 +385,16 @@ export interface ApiOrderStatusHistoryOrderStatusHistory extends Struct.Collecti
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> & Schema.Attribute.Private;
     fromStatus: Schema.Attribute.Enumeration<
-      ['pending', 'paid', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded']
+      [
+        'pending',
+        'paid',
+        'processing',
+        'shipped',
+        'delivered',
+        'cancelled',
+        'refunded',
+        'payment_failed',
+      ]
     > &
       Schema.Attribute.DefaultTo<'pending'>;
     locale: Schema.Attribute.String & Schema.Attribute.Private;
@@ -401,7 +410,16 @@ export interface ApiOrderStatusHistoryOrderStatusHistory extends Struct.Collecti
     order: Schema.Attribute.Relation<'manyToOne', 'api::order.order'>;
     publishedAt: Schema.Attribute.DateTime;
     toStatus: Schema.Attribute.Enumeration<
-      ['pending', 'paid', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded']
+      [
+        'pending',
+        'paid',
+        'processing',
+        'shipped',
+        'delivered',
+        'cancelled',
+        'refunded',
+        'payment_failed',
+      ]
     > &
       Schema.Attribute.Required;
     updatedAt: Schema.Attribute.DateTime;
@@ -447,6 +465,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
         'cancelled',
         'refunded',
         'cancellation_requested',
+        'payment_failed',
       ]
     > &
       Schema.Attribute.Required &
@@ -461,6 +480,9 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       Schema.Attribute.SetMinMaxLength<{
         maxLength: 5000;
       }>;
+    stockDeducted: Schema.Attribute.Boolean &
+      Schema.Attribute.Required &
+      Schema.Attribute.DefaultTo<false>;
     subtotal: Schema.Attribute.Decimal & Schema.Attribute.Required;
     total: Schema.Attribute.Decimal & Schema.Attribute.Required;
     updatedAt: Schema.Attribute.DateTime;
@@ -482,7 +504,7 @@ export interface ApiProductProduct extends Struct.CollectionTypeSchema {
   attributes: {
     brand: Schema.Attribute.String;
     category: Schema.Attribute.Relation<'manyToOne', 'api::category.category'>;
-    color: Schema.Attribute.String;
+    color: Schema.Attribute.Enumeration<['silver', 'gold', 'white', 'black']>;
     createdAt: Schema.Attribute.DateTime;
     createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> & Schema.Attribute.Private;
     description: Schema.Attribute.Blocks;
@@ -528,6 +550,35 @@ export interface ApiShipmentShipment extends Struct.CollectionTypeSchema {
     shipmentStatus: Schema.Attribute.Enumeration<['pending', 'shipped', 'delivered', 'failed']> &
       Schema.Attribute.DefaultTo<'pending'>;
     tracking_number: Schema.Attribute.String;
+    updatedAt: Schema.Attribute.DateTime;
+    updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> & Schema.Attribute.Private;
+  };
+}
+
+export interface ApiWebhookEventWebhookEvent extends Struct.CollectionTypeSchema {
+  collectionName: 'webhook_events';
+  info: {
+    displayName: 'WebhookEvent';
+    pluralName: 'webhook-events';
+    singularName: 'webhook-event';
+  };
+  options: {
+    draftAndPublish: false;
+  };
+  attributes: {
+    createdAt: Schema.Attribute.DateTime;
+    createdBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> & Schema.Attribute.Private;
+    errorMessage: Schema.Attribute.Text;
+    eventId: Schema.Attribute.String & Schema.Attribute.Required & Schema.Attribute.Unique;
+    eventType: Schema.Attribute.String & Schema.Attribute.Required;
+    locale: Schema.Attribute.String & Schema.Attribute.Private;
+    localizations: Schema.Attribute.Relation<'oneToMany', 'api::webhook-event.webhook-event'> &
+      Schema.Attribute.Private;
+    orderId: Schema.Attribute.String;
+    outcome: Schema.Attribute.Enumeration<['processed', 'unmatched']> & Schema.Attribute.Required;
+    paymentIntentId: Schema.Attribute.String;
+    processedAt: Schema.Attribute.DateTime & Schema.Attribute.Required;
+    publishedAt: Schema.Attribute.DateTime;
     updatedAt: Schema.Attribute.DateTime;
     updatedBy: Schema.Attribute.Relation<'oneToOne', 'admin::user'> & Schema.Attribute.Private;
   };
@@ -966,6 +1017,7 @@ declare module '@strapi/strapi' {
       'api::order.order': ApiOrderOrder;
       'api::product.product': ApiProductProduct;
       'api::shipment.shipment': ApiShipmentShipment;
+      'api::webhook-event.webhook-event': ApiWebhookEventWebhookEvent;
       'plugin::content-releases.release': PluginContentReleasesRelease;
       'plugin::content-releases.release-action': PluginContentReleasesReleaseAction;
       'plugin::i18n.locale': PluginI18NLocale;
