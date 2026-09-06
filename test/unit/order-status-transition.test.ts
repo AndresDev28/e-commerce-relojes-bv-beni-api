@@ -77,12 +77,23 @@ describe('[GAP-1 PR1+2] payment_failed transition matrix (pure domain)', () => {
             }
         );
 
-        it('[VT-PF-6] rejects paid → payment_failed per R-PFS-2 (no direct recovery)', () => {
-            // R-PFS-2 explicitly forbids `payment_failed → paid` AND forbids
-            // recovery from `paid` into `payment_failed`. The stock-depletion
-            // edge `paid → payment_failed` is a separate concern (D-DESIGN-5,
-            // S-OSA-6) introduced in PR3 — it must NOT be present here.
+        it('[VT-PF-6a] allows paid → payment_failed as the S-OSA-6 stock-depletion edge (D-DESIGN-5 exception)', () => {
+            // [GAP-1 PR3 T-PR3-7] The stock-depletion edge `paid →
+            // payment_failed` is a D-DESIGN-5 documented exception. It is
+            // only reachable from the webhook enrichment gate (never from
+            // a user-driven controller) and signals an automated
+            // transition: the paid order couldn't claim stock because the
+            // product is depleted, so the Order moves to `payment_failed`
+            // and the operator handles the manual refund.
             const result = validateOrderTransition('paid', 'payment_failed');
+            expect(result.valid).toBe(true);
+        });
+
+        it('[VT-PF-6b] still rejects payment_failed → paid (R-PFS-2 no direct recovery)', () => {
+            // The opposite direction remains forbidden: a payment_failed
+            // Order cannot auto-recover to paid; the recovery path is
+            // `payment_failed → pending → paid` (S-PFS-2 retry).
+            const result = validateOrderTransition('payment_failed', 'paid');
             expect(result.valid).toBe(false);
         });
     });

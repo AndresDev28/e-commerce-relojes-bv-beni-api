@@ -65,9 +65,17 @@ export interface WebhookEmailPayload {
  *   - `payment_failed → pending` (retry succeeded; webhook or manual)
  *   - `payment_failed → cancelled` (user abandons after failure)
  *   - direct recovery (`payment_failed → paid`, `payment_failed → processing|...|refunded`) is forbidden.
- *   - `paid → payment_failed` is also forbidden (R-PFS-2: no direct
- *     recovery). The stock-depletion edge for S-OSA-6 is added later in
- *     PR3 via D-DESIGN-5 with a documented exception.
+ *
+ * [GAP-1 PR3 T-PR3-7] Add the S-OSA-6 stock-depletion exception:
+ *   - `paid → payment_failed` is triggered ONLY by the webhook
+ *     enrichment gate when a paid shell (or paid order) cannot have its
+ *     stock claimed because the product is depleted between Order
+ *     creation and the inventory UPSERT. This is a documented D-DESIGN-5
+ *     exception to the R-PFS-2 "no direct recovery" rule. The transition
+ *     MUST NOT be reachable from any user-driven controller — it's only
+ *     fired from `services/order.ts:enrichShellWithItems` /
+ *     `lifecycles.ts:afterUpdate` enrichment gate. Manual refunds (via
+ *     Stripe dashboard) follow up.
  */
 const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
     pending: [
@@ -77,7 +85,7 @@ const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
         'cancellation_requested',
         'payment_failed',
     ],
-    paid: ['processing', 'cancelled', 'refunded', 'cancellation_requested'],
+    paid: ['processing', 'cancelled', 'refunded', 'cancellation_requested', 'payment_failed'],
     processing: ['shipped', 'cancelled', 'refunded', 'cancellation_requested'],
     cancellation_requested: ['cancelled', 'refunded', 'processing'],
     shipped: ['delivered', 'cancelled', 'refunded', 'processing'],
