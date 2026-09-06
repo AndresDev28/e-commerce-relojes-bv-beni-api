@@ -97,7 +97,7 @@ describe('[GAP-1 PR4a] payment_intent.succeeded — pending Order reconciliation
         // Status history entry pending → paid.
         const history = await strapi.entityService.findMany(
             'api::order-status-history.order-status-history',
-            { filters: { order: order.id } }
+            { filters: { order: order.id } as any }
         ) as any[];
         expect(history.length).toBeGreaterThanOrEqual(2);
         const transitions = history.map((h) => `${h.fromStatus}->${h.toStatus}`);

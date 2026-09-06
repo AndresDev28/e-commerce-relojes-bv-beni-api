@@ -166,19 +166,127 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
     },
 
     /**
-     * [GAP-1 PR4a T-PR4a-3] Stub for the `payment_intent.succeeded`
-     * handler. The ledger row was already inserted by the dispatcher;
-     * the real reconciliation (pending→paid, stock decrement, shell
-     * creation) ships in T-PR4a-5 and T-PR4a-7.
+     * [GAP-1 PR4a T-PR4a-5 / T-PR4a-7] `payment_intent.succeeded` reconciliation.
+     *
+     * Two arrival orders are wired here:
+     *   - **client-first pending Order** (T-PR4a-5): transition pending →
+     *     paid; the PR3 enrichment gate in `afterUpdate` decrements stock
+     *     exactly once (CAS on `stockDeducted`) and writes the status
+     *     history entry. Status guard covers paid re-delivery and
+     *     late-state (processing|shipped|...) warns.
+     *   - **D+ shell Order** (T-PR4a-7): if no Order matches the
+     *     correlation, create a paid shell (`items: []`,
+     *     `paymentInfo.source: 'webhook_reconciliation'`) via the full
+     *     Document Service lifecycle. Enrichment by the frontend UPSERT
+     *     (Gap #3) lands later and triggers the same enrichment gate.
+     *
+     * Missing metadata fallback (R-SW-6 / S-SW-7): if no Order matches
+     * `metadata.orderId` or `paymentIntentId`, warn and ack 200 — never
+     * NACK a Stripe webhook that has no Order (would cause retry storms).
+     *
+     * This handler runs INSIDE the `strapi.db.transaction({ trx, onCommit })`
+     * envelope opened by `dispatch`. All Document Service / Entity Service
+     * calls here join that ambient transaction automatically.
      */
     async handlePaymentIntentSucceeded(
         event: Stripe.Event,
         ctx?: { trx?: any; onCommit?: any }
     ) {
+        const intent = event.data.object as Stripe.PaymentIntent;
+        const paymentIntentId = intent.id;
+        const orderIdFromMetadata = (intent.metadata && (intent.metadata as any).orderId) || null;
+        const userIdFromMetadata = (intent.metadata && (intent.metadata as any).userId) || null;
+        const amount = typeof intent.amount === 'number' ? intent.amount : 0;
+
         strapi.log.info(
-            `[GAP-1 PR4a] handlePaymentIntentSucceeded stub ack for event.id=${event.id} ` +
-            `(real reconciliation lands in T-PR4a-5 / T-PR4a-7)`
+            `[GAP-1] payment_intent.succeeded paymentIntentId=${paymentIntentId} ` +
+            `orderId=${orderIdFromMetadata} userId=${userIdFromMetadata} amount=${amount}`
         );
+
+        // [GAP-1 PR4a R-SW-4 / D-DESIGN-4] Correlation: orderId (unique) → paymentIntentId.
+        let order: any = null;
+
+        if (orderIdFromMetadata) {
+            try {
+                order = await strapi.documents('api::order.order').findFirst({
+                    filters: { orderId: orderIdFromMetadata } as any,
+                });
+            } catch (findErr) {
+                strapi.log.warn(`[GAP-1] findFirst by orderId failed: ${(findErr as any).message}`);
+            }
+        }
+
+        if (!order && paymentIntentId) {
+            try {
+                order = await strapi.documents('api::order.order').findFirst({
+                    filters: { paymentIntentId } as any,
+                });
+            } catch (findErr) {
+                strapi.log.warn(`[GAP-1] findFirst by paymentIntentId failed: ${(findErr as any).message}`);
+            }
+        }
+
+        if (order) {
+            // R-SW-4 outcomes for known Order.
+            if (order.orderStatus === 'paid') {
+                strapi.log.info(`[GAP-1] Order ${order.orderId} already paid (re-delivery), ack 200`);
+                return { received: true };
+            }
+
+            if (order.orderStatus === 'pending') {
+                strapi.log.info(
+                    `[GAP-1] Transitioning pending Order ${order.orderId} → paid via webhook`
+                );
+                // [GAP-1 PR4a D-DESIGN-4] Document Service update by
+                // documentId triggers beforeUpdate (transition validation)
+                // and afterUpdate (enrichment gate + status history + email).
+                await strapi.documents('api::order.order').update({
+                    documentId: order.documentId,
+                    data: { orderStatus: 'paid' } as any,
+                });
+                return { received: true };
+            }
+
+            // Late event: S-SW-8.
+            strapi.log.warn(
+                `[GAP-1] Late succeeded event, orderStatus=${order.orderStatus} ` +
+                `orderId=${order.orderId}`
+            );
+            return { received: true };
+        }
+
+        // No Order found → D+ shell creation path (T-PR4a-7).
+        if (!orderIdFromMetadata || !userIdFromMetadata) {
+            // R-SW-6 / S-SW-7: missing metadata fallback. Never NACK.
+            strapi.log.warn(
+                `[GAP-1] No metadata.orderId, paymentIntentId=${paymentIntentId}`
+            );
+            return { received: true };
+        }
+
+        strapi.log.info(
+            `[GAP-1] Creating D+ shell for orderId=${orderIdFromMetadata} ` +
+            `userId=${userIdFromMetadata} amount=${amount}`
+        );
+
+        // [GAP-1 PR4a D-DESIGN-6] Shell goes through the full Document
+        // Service lifecycle (afterCreate records `null → paid` history
+        // and fires the initial-purchase email exactly once; no stock
+        // decrement because items are empty).
+        await strapi.documents('api::order.order').create({
+            data: {
+                orderId: orderIdFromMetadata,
+                paymentIntentId,
+                total: amount / 100,
+                subtotal: 0,
+                shipping: 0,
+                orderStatus: 'paid',
+                items: [],
+                paymentInfo: { source: 'webhook_reconciliation' },
+                user: { connect: [userIdFromMetadata] } as any,
+            } as any,
+        });
+
         return { received: true };
     },
 
