@@ -173,6 +173,9 @@ export default {
 
       // 2. [REF-09] Decrement stock for each item in the order
       // We only decrement if the order is NOT already cancelled (e.g., failed immediately)
+      // [GAP-1 PR3 T-PR3-1 seam] This block will be REMOVED in T-PR3-5
+      // (the design moves stock decrement authority to the webhook enrichment
+      // gate). The status-history and email blocks below remain.
       if (result.orderStatus !== 'cancelled' && result.items && Array.isArray(result.items)) {
         strapi.log.info(`[REF-09] Order ${result.orderId} created: Decrementing stock for ${result.items.length} items`);
 
@@ -305,6 +308,9 @@ export default {
       )
 
       // 4. [REF-09] Restore stock if status changed to 'cancelled' or 'refunded'
+      // [GAP-1 PR3 T-PR3-1 seam] This block will be GATED in T-PR3-5 by
+      // `result.stockDeducted === true` so phantom restoration is impossible
+      // (S-PFS-3 cancel-after-failure must not restore un-deducted stock).
       const refundTargetStatuses = ['cancelled', 'refunded'];
       const isNowRefunded = refundTargetStatuses.includes(newStatus);
       const wasAlreadyRefunded = refundTargetStatuses.includes(previousStatus);
