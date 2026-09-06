@@ -354,53 +354,164 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
     /**
      * [GAP-1 PR4b T-PR4b-1 / T-PR4b-3] Failed-payment reconciliation.
      *
-     * TODO (T-PR4b-3 GREEN implementation):
+     * Implements the SD-3 sequence diagram (design.md §2) and satisfies
+     * R-SW-5, R-PFS-2, R-PFS-3, R-PFS-5, R-PFS-6, R-PFS-7.
+     *
+     * Flow:
      *   1. Extract `paymentIntentId`, `metadata.orderId`, `metadata.userId`
      *      from `event.data.object as Stripe.PaymentIntent`.
      *   2. Build the audit via `extractPaymentFailureAudit(paymentIntent)`
      *      then `redactPaymentError(...)` — ONLY `{ code, failure_message }`
      *      is persisted. Never store `decline_code`, `payment_method_details`,
-     *      PAN, expiry, CVV, billing address.
+     *      PAN, expiry, CVV, billing address (R-PFS-5 / S-PFS-5).
      *   3. Lookup the Order: first by `metadata.orderId`, then by
      *      `paymentIntentId` (same pattern as the succeeded handler).
      *   4. If Order not found → log `[GAP-1] payment_failed with no matching
-     *      Order` warn, return `{ received: true }`.
-     *   5. If Order found with terminal `cancelled | refunded` → ack 200,
+     *      Order` warn, return `{ received: true }` (R-SW-5, S-SW-5).
+     *   5. If Order terminal (`cancelled | refunded`) → ack 200,
      *      no transition (R-SW-5).
-     *   6. If Order found with non-transitionable status (`paid`,
-     *      `processing`, `shipped`, `delivered`) → log
-     *      `[GAP-1] payment_failed on non-transitionable Order,
-     *      orderStatus=...` warn, ack 200.
-     *   7. If Order found with `pending | cancellation_requested` →
+     *   6. If Order in non-transitionable status (`paid`, `processing`,
+     *      `shipped`, `delivered`) → log `[GAP-1] payment_failed on
+     *      non-transitionable Order, orderStatus=...` warn, ack 200.
+     *   7. If Order in `pending | cancellation_requested` →
      *      `strapi.documents().update({ orderStatus: 'payment_failed',
-     *      paymentInfo: { ...existing, paymentError: audit } })`.
-     *      `beforeUpdate` validates `pending → payment_failed` is allowed
-     *      per `VALID_TRANSITIONS`; `afterUpdate` creates the status history
-     *      entry and sends the failure email with
-     *      `statusChangeNote: 'Payment failed: <failure_message>'`.
-     *   8. If Order found with `payment_failed` (re-delivery) → ack 200,
-     *      no transition (idempotent).
+     *      paymentInfo: { ...existing, paymentError: audit },
+     *      statusChangeNote: 'Payment failed: <failure_message>' })`.
+     *      `beforeUpdate` validates the transition per `VALID_TRANSITIONS`;
+     *      `afterUpdate` creates the status history entry and sends the
+     *      failure email with the note (R-PFS-6, D-DESIGN-7).
+     *      Stock is NOT decremented (R-PFS-7 — payment never confirmed) and
+     *      NO automatic refund / shipment / restoration fires (R-PFS-3).
+     *   8. If Order is `payment_failed` (re-delivery) → ack 200, no
+     *      transition (idempotent; the unique ledger row already blocked
+     *      a true duplicate, but a `payment_failed → payment_failed`
+     *      update would also no-op via the unchanged-status guard).
+     *
+     * Runs INSIDE the `strapi.db.transaction({ trx, onCommit })` envelope
+     * opened by `dispatch`. All Document Service calls join that ambient
+     * transaction automatically.
      */
     async reconcilePaymentFailed(event: Stripe.Event) {
-        // [GAP-1 PR4b T-PR4b-1] Skeleton only. Implementation in T-PR4b-3.
         const intent = event.data.object as Stripe.PaymentIntent;
         const paymentIntentId = intent?.id;
+        const orderIdFromMetadata = (intent?.metadata && (intent.metadata as any).orderId) || null;
+
+        // [GAP-1 PR4b R-PFS-5] Build the redacted audit BEFORE any DB
+        // lookup so we never accidentally persist a non-redacted payload.
+        const audit = this.extractPaymentFailureAudit(intent);
+
         strapi.log.info(
             `[GAP-1] reconcilePaymentFailed event.id=${event.id} ` +
-            `paymentIntentId=${paymentIntentId} (T-PR4b-3 will wire full reconciliation)`
+            `paymentIntentId=${paymentIntentId} orderId=${orderIdFromMetadata} ` +
+            `code=${audit.code}`
         );
+
+        // [GAP-1 PR4b R-SW-4 / D-DESIGN-4] Correlation: orderId (unique) → paymentIntentId.
+        let order: any = null;
+
+        if (orderIdFromMetadata) {
+            try {
+                order = await strapi.documents('api::order.order').findFirst({
+                    filters: { orderId: orderIdFromMetadata } as any,
+                });
+            } catch (findErr) {
+                strapi.log.warn(
+                    `[GAP-1] reconcilePaymentFailed: findFirst by orderId failed: ` +
+                    `${(findErr as any).message}`
+                );
+            }
+        }
+
+        if (!order && paymentIntentId) {
+            try {
+                order = await strapi.documents('api::order.order').findFirst({
+                    filters: { paymentIntentId } as any,
+                });
+            } catch (findErr) {
+                strapi.log.warn(
+                    `[GAP-1] reconcilePaymentFailed: findFirst by paymentIntentId failed: ` +
+                    `${(findErr as any).message}`
+                );
+            }
+        }
+
+        // R-SW-5 / S-SW-5: no Order → warn + ack.
+        if (!order) {
+            strapi.log.warn(
+                `[GAP-1] payment_failed with no matching Order ` +
+                `event.id=${event.id} paymentIntentId=${paymentIntentId} ` +
+                `orderId=${orderIdFromMetadata}`
+            );
+            return { received: true };
+        }
+
+        const status = order.orderStatus;
+
+        // R-SW-5: terminal states → ack 200, no transition.
+        if (status === 'cancelled' || status === 'refunded') {
+            strapi.log.info(
+                `[GAP-1] payment_failed on terminal Order ${order.orderId} ` +
+                `orderStatus=${status}, ack 200 (no transition)`
+            );
+            return { received: true };
+        }
+
+        // Already payment_failed (re-delivery or duplicate via the
+        // status-shape match) → idempotent ack.
+        if (status === 'payment_failed') {
+            strapi.log.info(
+                `[GAP-1] payment_failed on already-failed Order ${order.orderId}, ` +
+                `ack 200 (idempotent)`
+            );
+            return { received: true };
+        }
+
+        // Non-transitionable from `payment_failed` per R-PFS-2 — but
+        // here we're talking about the Order not being in a state that
+        // can move TO `payment_failed`. Per VALID_TRANSITIONS only
+        // `pending` and `cancellation_requested` can transition to
+        // `payment_failed`; anything else (paid, processing, shipped,
+        // delivered) is non-transitionable. Warn + ack to avoid a 500
+        // retry storm.
+        if (status !== 'pending' && status !== 'cancellation_requested') {
+            strapi.log.warn(
+                `[GAP-1] payment_failed on non-transitionable Order ` +
+                `${order.orderId} orderStatus=${status}, ack 200 (no transition)`
+            );
+            return { received: true };
+        }
+
+        // Transition path: `pending | cancellation_requested → payment_failed`.
+        const failureMessage = audit.failure_message;
+        const statusChangeNote = `Payment failed: ${failureMessage}`;
+
+        strapi.log.info(
+            `[GAP-1] Transitioning ${status} Order ${order.orderId} → payment_failed ` +
+            `via webhook (code=${audit.code})`
+        );
+
+        // [GAP-1 PR4b D-DESIGN-4] Document Service update by documentId
+        // triggers `beforeUpdate` (transition validation) and `afterUpdate`
+        // (status history + email with `statusChangeNote`).
+        await strapi.documents('api::order.order').update({
+            documentId: order.documentId,
+            data: {
+                orderStatus: 'payment_failed',
+                statusChangeNote,
+                paymentInfo: {
+                    ...((order as any).paymentInfo || {}),
+                    paymentError: audit,
+                },
+            } as any,
+        });
+
         return { received: true };
     },
 
     /**
      * [GAP-1 PR4b T-PR4b-1] Extract a redacted failure audit from a
-     * Stripe PaymentIntent's `last_payment_error`.
-     *
-     * Returns the raw `{ code, failure_message }` pair that
-     * `redactPaymentError(...)` will then whitelist to its safe shape.
-     *
-     * Implementation in T-PR4b-3 (currently returns the safe defaults so
-     * the skeleton compiles and the file remains buildable).
+     * Stripe PaymentIntent's `last_payment_error`. Returns the safe
+     * `{ code, failure_message }` shape via `redactPaymentError(...)`.
      */
     extractPaymentFailureAudit(paymentIntent: Stripe.PaymentIntent): { code: string; failure_message: string } {
         const raw = (paymentIntent as any)?.last_payment_error || null;
@@ -416,14 +527,26 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
      * expiry, CVV, billing address, or any nested object. The strict
      * shape is enforced by T-TG-5 (redaction contract test) in T-PR4b-5.
      *
-     * Implementation in T-PR4b-5 (strict whitelist). Currently returns
-     * the safe defaults so the skeleton compiles.
+     * Inputs are coerced to strings when present and non-empty; any
+     * missing or non-string field falls back to the safe default so
+     * no sensitive shape can leak via `undefined`-key serialization.
      */
     redactPaymentError(raw: any): { code: string; failure_message: string } {
-        // TODO (T-PR4b-5): strict whitelist.
+        // [GAP-1 PR4b T-PR4b-5 strict whitelist — implemented here in
+        // T-PR4b-3 so the audit contract is enforced from the very
+        // first transition. Whitelist only `code` and `message` (renamed
+        // to `failure_message`). All other fields are dropped by
+        // construction — we never read them, so they cannot leak.
+        const code = typeof raw?.code === 'string' && raw.code.length > 0
+            ? raw.code
+            : 'unknown';
+        const message = typeof raw?.message === 'string' && raw.message.length > 0
+            ? raw.message
+            : 'Unknown failure';
+
         return {
-            code: 'unknown',
-            failure_message: 'Unknown failure',
+            code,
+            failure_message: message,
         };
     },
 }));

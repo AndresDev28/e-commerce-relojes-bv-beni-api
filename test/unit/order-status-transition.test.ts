@@ -96,6 +96,15 @@ describe('[GAP-1 PR1+2] payment_failed transition matrix (pure domain)', () => {
             const result = validateOrderTransition('payment_failed', 'paid');
             expect(result.valid).toBe(false);
         });
+
+        it('[VT-PF-6c] allows cancellation_requested → payment_failed (PR4b webhooks race)', () => {
+            // [GAP-1 PR4b T-PR4b-3] When the customer requested cancellation
+            // but the Stripe charge failed in parallel, the webhook arrives
+            // and the Order is in `cancellation_requested`. The payment
+            // outcome takes priority over the cancel-request intent.
+            const result = validateOrderTransition('cancellation_requested', 'payment_failed');
+            expect(result.valid).toBe(true);
+        });
     });
 
     describe('matrix surface', () => {
