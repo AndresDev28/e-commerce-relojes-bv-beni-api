@@ -9,6 +9,49 @@
  * commit. The legacy `charge.refunded` branch is preserved byte-identical
  * (D-DESIGN-11 / Decision 11) and stays outside the transactional path
  * because it predates the ledger contract.
+ *
+ * [GAP-1 PR4b T-PR4b-6] Dispatch summary (event → behavior):
+ *
+ *   - `charge.refunded`:
+ *       Legacy Entity Service branch. Looks up Order by paymentIntentId.
+ *       Terminal guard: if the Order is `payment_failed`, return 200
+ *       without transitioning (R-PFS-2 forbids `payment_failed → refunded`;
+ *       a transition attempt would 4xx-loop). Otherwise transitions to
+ *       `refunded` (existing behavior, D-DESIGN-11).
+ *
+ *   - `payment_intent.succeeded`:
+ *       Document Service reconciliation. Correlation: orderId → paymentIntentId.
+ *       No Order → D+ shell (`orderStatus: paid`, `items: []`,
+ *       `paymentInfo.source: webhook_reconciliation`).
+ *       Order `paid` → ack 200 (idempotent re-delivery).
+ *       Order `pending` → transition to `paid`; afterUpdate enrichment
+ *       gate decrements stock exactly once via `decrementStockOnce`.
+ *       Order in `[processing, shipped, delivered, cancelled, refunded,
+ *       payment_failed]` → warn + ack 200 (no transition; late event).
+ *       Missing metadata + no Order → warn + ack 200 (R-SW-6).
+ *
+ *   - `payment_intent.payment_failed`:
+ *       Document Service reconciliation. Correlation: orderId → paymentIntentId.
+ *       No Order → warn + ack 200 (R-SW-5 / S-SW-5).
+ *       Terminal `cancelled | refunded` → ack 200 (no transition).
+ *       Already `payment_failed` → ack 200 (idempotent).
+ *       Non-transitionable `paid | processing | shipped | delivered`
+ *         → warn + ack 200 (no transition; matrix rejects the edge).
+ *       `pending | cancellation_requested` → transition to `payment_failed`
+ *         with redacted `paymentInfo.paymentError = { code,
+ *         failure_message }` only; status history + email fire via
+ *         afterUpdate (R-PFS-6, D-DESIGN-7).
+ *
+ *   - Unhandled event types:
+ *       Ack 200, no side effects (R-SW-2).
+ *
+ *   - Operational toggle:
+ *       The `STRIPE_PI_WEBHOOKS_ENABLED` env var (set at deploy time) is
+ *       the kill-switch for `payment_intent.*` dispatch. PR4b does NOT
+ *       add or modify that switch — it's an ops concern at deploy time
+ *       and must default to `false` until the frontend Gap #3 UPSERT PR
+ *       lands. See `openspec/changes/sprint-5-stripe-webhook/proposal.md`
+ *       for the sequenced rollout.
  */
 
 import { factories } from '@strapi/strapi';
