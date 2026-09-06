@@ -168,4 +168,93 @@ describe('Order Stock Authority [GAP-1 PR3] — lifecycle marker contract', () =
         const after: any = await strapi.db.connection('products').where('id', product.id).first()
         expect(after.stock).toBe(10) // unchanged
     })
+
+    // =============================================================================
+    // [GAP-1 PR3 T-PR3-6] Enrichment + depleted-stock recovery — RED tests.
+    // These specify the webhook-first (D+) shell flow where a shell Order
+    // is created with empty items by `payment_intent.succeeded`, then later
+    // enriched with items by a UPSERT from the frontend. The enrichment is
+    // what triggers the stock decrement — and only when stock is available.
+    // =============================================================================
+
+    // T-E-1: shell Order created with empty items leaves stock untouched.
+    it('T-E-1: shell Order (items empty, stockDeducted=false) does not decrement', async () => {
+        const strapi = getStrapi()
+
+        const product = await createTestProduct({ name: `T-E-1 ${Date.now()}`, stock: 10 })
+        const user = await createTestUser({ username: 'e1', email: 'e1@test.com', password: 'p' })
+
+        // Shell: paid, empty items, stockDeducted=false (the webhook would
+        // create this in PR4a; for PR3 we create it directly via
+        // createTestOrder with empty items).
+        const shell = await createTestOrder({
+            items: [],
+            subtotal: 0,
+            shipping: 0,
+            total: 100,
+            orderStatus: 'paid',
+        }, user.id)
+
+        expect(shell.stockDeducted).toBe(false)
+        const after: any = await strapi.db.connection('products').where('id', product.id).first()
+        expect(after.stock).toBe(10)
+    })
+
+    // T-E-2: shell enriched with items + stockDeducted=true → stock decrements once.
+    it('T-E-2: enrichment with items AND stockDeducted=true decrements stock exactly once', async () => {
+        const strapi = getStrapi()
+
+        const product = await createTestProduct({ name: `T-E-2 ${Date.now()}`, stock: 10 })
+        const user = await createTestUser({ username: 'e2', email: 'e2@test.com', password: 'p' })
+
+        const shell = await createTestOrder({
+            items: [],
+            subtotal: 0,
+            shipping: 0,
+            total: 100,
+            orderStatus: 'paid',
+        }, user.id)
+
+        // Enrichment: UPDATE with items + stockDeducted=true. In PR3 this
+        // is what the webhook (or a test-only helper) triggers. For now
+        // we set the marker directly so we can assert the helper wires
+        // correctly in T-PR3-7.
+        await strapi.entityService.update('api::order.order', shell.id, {
+            data: {
+                items: [{ id: product.id, quantity: 4 }],
+                stockDeducted: true,
+            },
+        })
+
+        const after: any = await strapi.db.connection('products').where('id', product.id).first()
+        expect(after.stock).toBe(6) // 10 - 4 (decrement fired)
+    })
+
+    // T-E-3: enrichment with items but stockDeducted=false → stock MUST NOT decrement.
+    it('T-E-3: enrichment with items but stockDeducted=false does NOT decrement', async () => {
+        const strapi = getStrapi()
+
+        const product = await createTestProduct({ name: `T-E-3 ${Date.now()}`, stock: 10 })
+        const user = await createTestUser({ username: 'e3', email: 'e3@test.com', password: 'p' })
+
+        await createTestOrder({
+            items: [],
+            subtotal: 0,
+            shipping: 0,
+            total: 100,
+            orderStatus: 'paid',
+        }, user.id)
+
+        const orders = await strapi.entityService.findMany('api::order.order', { filters: { orderStatus: 'paid' } }) as any[]
+        // Enrich with items but keep stockDeducted=false (a misconfig / bug).
+        await strapi.entityService.update('api::order.order', orders[0].id, {
+            data: {
+                items: [{ id: product.id, quantity: 4 }],
+                // stockDeducted NOT flipped → marker is authoritative.
+            },
+        })
+
+        const after: any = await strapi.db.connection('products').where('id', product.id).first()
+        expect(after.stock).toBe(10) // unchanged — marker gate kept the decrement out
+    })
 })
