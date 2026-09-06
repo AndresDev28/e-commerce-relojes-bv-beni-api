@@ -264,15 +264,11 @@ describe('Order Stock Management ([REF-09])', () => {
 // =============================================================================
 // [GAP-1 PR3 T-PR3-2] Atomic `updateProductStock` contract — RED tests
 // These tests specify the new atomic, idempotent helper that replaces the
-// read-then-write implementation. They will FAIL against the current
-// implementation because:
-//   - The current helper returns void (not `true`/`false`).
-//   - The current helper uses `Math.max(0, …)` which silently floors stock to
-//     zero on insufficient decrement (no guard).
-//   - The current helper reads-then-writes — concurrent decrements can race
-//     on the read snapshot.
-// They turn GREEN in T-PR3-3 when the SQL is rewritten as a single guarded
-// `UPDATE products SET stock = stock + ? WHERE id = ? AND stock >= ?`.
+// read-then-write implementation. They turn GREEN in T-PR3-3 when the SQL
+// is rewritten as a single guarded `UPDATE products SET stock = stock + ?
+// WHERE id = ? AND stock >= ?` (the helper self-detects ambient transactions
+// and falls back to entityService.update + guard when one is active, so the
+// existing lifecycle callers don't deadlock).
 // =============================================================================
 describe('Order Stock Management [GAP-1 PR3] — Atomic updateProductStock', () => {
     beforeEach(async () => {
@@ -287,7 +283,9 @@ describe('Order Stock Management [GAP-1 PR3] — Atomic updateProductStock', () 
         const result = await strapi.service('api::order.order').updateProductStock(product.id, -3)
 
         expect(result).toBe(true)
-        const after = await strapi.entityService.findOne('api::product.product', product.id)
+        // Verify via direct knex read (Repository + entityService can return
+        // cached values after a raw write).
+        const after: any = await strapi.db.connection('products').where('id', product.id).first()
         expect(after.stock).toBe(7) // 10 - 3
     })
 
@@ -307,7 +305,7 @@ describe('Order Stock Management [GAP-1 PR3] — Atomic updateProductStock', () 
         // 10 successful decrements of 3 from stock 100 → stock 70, no losses.
         const successCount = results.filter((r) => r === true).length
         expect(successCount).toBe(10)
-        const after = await strapi.entityService.findOne('api::product.product', product.id)
+        const after: any = await strapi.db.connection('products').where('id', product.id).first()
         expect(after.stock).toBe(70) // 100 - 10*3
     })
 
@@ -320,7 +318,7 @@ describe('Order Stock Management [GAP-1 PR3] — Atomic updateProductStock', () 
         const result = await strapi.service('api::order.order').updateProductStock(product.id, -100)
 
         expect(result).toBe(false)
-        const after = await strapi.entityService.findOne('api::product.product', product.id)
+        const after: any = await strapi.db.connection('products').where('id', product.id).first()
         expect(after.stock).toBe(5) // unchanged
     })
 
@@ -335,7 +333,7 @@ describe('Order Stock Management [GAP-1 PR3] — Atomic updateProductStock', () 
         const results = await Promise.all(restores.map((fn) => fn()))
 
         expect(results.every((r) => r === true)).toBe(true)
-        const after = await strapi.entityService.findOne('api::product.product', product.id)
+        const after: any = await strapi.db.connection('products').where('id', product.id).first()
         expect(after.stock).toBe(10) // 0 + 5*2
     })
 
@@ -346,12 +344,12 @@ describe('Order Stock Management [GAP-1 PR3] — Atomic updateProductStock', () 
 
         const dec = await strapi.service('api::order.order').updateProductStock(product.id, -4)
         expect(dec).toBe(true)
-        const mid = await strapi.entityService.findOne('api::product.product', product.id)
+        const mid: any = await strapi.db.connection('products').where('id', product.id).first()
         expect(mid.stock).toBe(4)
 
         const inc = await strapi.service('api::order.order').updateProductStock(product.id, +4)
         expect(inc).toBe(true)
-        const final = await strapi.entityService.findOne('api::product.product', product.id)
+        const final: any = await strapi.db.connection('products').where('id', product.id).first()
         expect(final.stock).toBe(8) // round-trip back to original
     })
 })

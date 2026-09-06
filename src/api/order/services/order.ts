@@ -17,6 +17,14 @@
 import { factories } from '@strapi/strapi';
 import { OrderStatus } from '../../../core/domain/order/order.types';
 
+// [GAP-1 PR3 T-PR3-3] Access Strapi 5's ambient transaction via AsyncLocalStorage.
+// The Document Service wraps create/update in `strapi.db.transaction(cb)`, so
+// `afterCreate` and `afterUpdate` always run inside an active transaction.
+// Our helper must join that transaction (via `.transacting(trx)`) instead of
+// issuing a separate raw UPDATE that would deadlock against the row lock held
+// by the ambient transaction.
+const transactionContext = require('@strapi/database/dist/transaction-context');
+
 export default factories.createCoreService('api::order.order', ({ strapi }) => ({
     /**
      * [ORD-33] Centralized logic for status history recording
@@ -56,15 +64,33 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
     /**
      * [REF-09] Atomic stock management
      *
-     * [GAP-1 PR3 T-PR3-1 seam] Contract is being upgraded to an atomic
-     * compare-and-set on `products.stock` (see T-PR3-3 for the implementation
-     * and T-PR3-2 for the test contract). The seam comment marks where the
-     * signature gains an optional `{ trx }` so the webhook enrichment gate
-     * can join the ambient transaction.
+     * [GAP-1 PR3 T-PR3-3] Hardened so the helper can be called from both
+     * transactional (Strapi lifecycle / PR4a webhook) and non-transactional
+     * (tests / external) contexts without deadlocking or losing updates.
      *
-     * [GAP-1 PR3 T-PR3-5 seam] Callers must treat a `false` return as
-     * "insufficient stock" — the lifecycle restoration gate relies on this
-     * to know whether to clear the `stockDeducted` marker.
+     * Contract (T-PR3-2 tests):
+     *   - Returns `true` if the row was updated (one affected row).
+     *   - Returns `false` for a decrement that would floor below zero
+     *     (zero affected rows; stock is left unchanged).
+     *   - Inside a transaction the helper joins the ambient trx via
+     *     `.transacting(trx)`, so no deadlock against the row lock held
+     *     by the outer create/update call.
+     *   - Outside a transaction the raw SQL `WHERE stock >= |qty|` guard
+     *     makes the decrement race-safe under concurrent calls.
+     *
+     * Two execution paths:
+     *   - **In-transaction path**: when an ambient transaction exists
+     *     (Strapi lifecycle, PR4a webhook), we issue a single raw SQL
+     *     UPDATE on the ambient trx with the `stock >= |qty|` guard. The
+     *     atomic guard is the only correctness mechanism that works under
+     *     concurrent decrements in either SQLite (serial) or Postgres
+     *     (per-statement row lock).
+     *   - **No-transaction path**: tests and external callers get the
+     *     same single-statement UPDATE on the default connection.
+     *
+     * Callers can also pass `{ trx }` explicitly (used by PR4a's
+     * reconciliation handler when wrapping multiple helpers in one
+     * ambient `strapi.db.transaction`).
      */
     async updateProductStock(
         productId: number | string,
@@ -72,28 +98,58 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
         opts?: { trx?: any }
     ): Promise<boolean> {
         try {
-            // Ensure we handle both numeric IDs and string IDs (documentId) correctly
-            const numericId = typeof productId === 'string' && !isNaN(Number(productId)) ? Number(productId) : productId;
+            const numericId = typeof productId === 'string' && !isNaN(Number(productId))
+                ? Number(productId)
+                : productId;
 
-            const product = await strapi.entityService.findOne('api::product.product', numericId, {
-                fields: ['stock', 'name']
-            });
+            // [GAP-1 PR3 T-PR3-3] Resolve which knex builder to use:
+            //   - explicit `opts.trx` wins
+            //   - else the ambient ALS transaction (set by
+            //     `strapi.db.transaction(cb)`) — the Document Service
+            //     wraps create/update in a transaction, so afterCreate
+            //     and afterUpdate always run inside one
+            //   - else the default knex connection (no ambient trx)
+            const ambientTrx = opts?.trx ?? transactionContext.transactionCtx.get();
 
-            if (!product) {
-                strapi.log.error(`[REF-09] Product ${productId} not found for stock update`);
-                return;
+            const absQty = Math.abs(quantityChange);
+
+            const updateBuilder = (ambientTrx ?? strapi.db.connection)('products')
+                .where('id', numericId)
+                .update({
+                    stock: strapi.db.connection.raw(
+                        quantityChange < 0 ? 'stock - ?' : 'stock + ?',
+                        [absQty]
+                    ),
+                });
+
+            if (quantityChange < 0) {
+                updateBuilder.where('stock', '>=', absQty);
             }
 
-            const currentStock = product.stock || 0;
-            const newStock = currentStock + quantityChange;
+            if (ambientTrx) {
+                updateBuilder.transacting(ambientTrx);
+            }
 
-            await strapi.entityService.update('api::product.product', product.id, {
-                data: { stock: Math.max(0, newStock) }
-            });
+            const affected: number = await updateBuilder;
+            const ok = affected > 0;
 
-            strapi.log.info(`[REF-09] Stock updated for "${product.name}" (${product.id}): ${currentStock} → ${newStock}`);
+            if (ok) {
+                strapi.log.info(
+                    `[REF-09][GAP-1] Stock ${quantityChange < 0 ? 'decremented' : 'restored'} ` +
+                    `for product ${productId} by ${quantityChange}` +
+                    (ambientTrx ? ' (ambient trx)' : '')
+                );
+            } else if (quantityChange < 0) {
+                strapi.log.warn(
+                    `[REF-09][GAP-1] Insufficient stock for product ${productId}: ` +
+                    `requested ${absQty}, refused by guard`
+                );
+            }
+
+            return ok;
         } catch (error: any) {
             strapi.log.error(`[REF-09] Failed to update stock for product ${productId}:`, error.message);
+            return false;
         }
     }
 }));

@@ -553,7 +553,7 @@ export async function createTestProduct(data?: {
             children: [{ type: 'text', text: 'A test product description' }]
           }
         ],
-        stock: data?.stock || 10,
+        stock: data?.stock ?? 10,
         category: categoryId,
         slug: `test-product-${Date.now()}`,
         publishedAt: new Date().toISOString(),
