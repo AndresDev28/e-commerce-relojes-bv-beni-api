@@ -332,16 +332,98 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
     },
 
     /**
-     * [GAP-1 PR4a T-PR4a-1] Stub for the `payment_intent.payment_failed`
-     * handler. Implemented in PR4b; the dispatcher must call this stub
-     * and the stub must throw so the failure surfaces as a 500 (Stripe
-     * will retry until the real handler ships).
+     * [GAP-1 PR4a T-PR4a-1] [GAP-1 PR4b T-PR4b-1] Stub → skeleton for
+     * `payment_intent.payment_failed`. PR4a shipped a throws-stub so the
+     * dispatcher wired in correctly and a missing implementation would
+     * surface as a 500 (Stripe retry). PR4b replaces the throw with a
+     * real skeleton that logs and delegates to `reconcilePaymentFailed`
+     * — the redaction + transition logic lands in T-PR4b-3.
+     *
+     * Runs INSIDE the `strapi.db.transaction({ trx, onCommit })` envelope
+     * opened by `dispatch`. All Document Service / Entity Service calls
+     * join that ambient transaction automatically.
      */
     async handlePaymentIntentPaymentFailed(
         event: Stripe.Event,
         ctx?: { trx?: any; onCommit?: any }
     ) {
-        strapi.log.warn(`[GAP-1 PR4a] handlePaymentIntentPaymentFailed not yet implemented (event.id=${event.id})`);
-        throw new Error('not implemented: handlePaymentIntentPaymentFailed');
+        strapi.log.info(`[GAP-1] payment_failed handler starting, event.id=${event.id}`);
+        return this.reconcilePaymentFailed(event);
+    },
+
+    /**
+     * [GAP-1 PR4b T-PR4b-1 / T-PR4b-3] Failed-payment reconciliation.
+     *
+     * TODO (T-PR4b-3 GREEN implementation):
+     *   1. Extract `paymentIntentId`, `metadata.orderId`, `metadata.userId`
+     *      from `event.data.object as Stripe.PaymentIntent`.
+     *   2. Build the audit via `extractPaymentFailureAudit(paymentIntent)`
+     *      then `redactPaymentError(...)` — ONLY `{ code, failure_message }`
+     *      is persisted. Never store `decline_code`, `payment_method_details`,
+     *      PAN, expiry, CVV, billing address.
+     *   3. Lookup the Order: first by `metadata.orderId`, then by
+     *      `paymentIntentId` (same pattern as the succeeded handler).
+     *   4. If Order not found → log `[GAP-1] payment_failed with no matching
+     *      Order` warn, return `{ received: true }`.
+     *   5. If Order found with terminal `cancelled | refunded` → ack 200,
+     *      no transition (R-SW-5).
+     *   6. If Order found with non-transitionable status (`paid`,
+     *      `processing`, `shipped`, `delivered`) → log
+     *      `[GAP-1] payment_failed on non-transitionable Order,
+     *      orderStatus=...` warn, ack 200.
+     *   7. If Order found with `pending | cancellation_requested` →
+     *      `strapi.documents().update({ orderStatus: 'payment_failed',
+     *      paymentInfo: { ...existing, paymentError: audit } })`.
+     *      `beforeUpdate` validates `pending → payment_failed` is allowed
+     *      per `VALID_TRANSITIONS`; `afterUpdate` creates the status history
+     *      entry and sends the failure email with
+     *      `statusChangeNote: 'Payment failed: <failure_message>'`.
+     *   8. If Order found with `payment_failed` (re-delivery) → ack 200,
+     *      no transition (idempotent).
+     */
+    async reconcilePaymentFailed(event: Stripe.Event) {
+        // [GAP-1 PR4b T-PR4b-1] Skeleton only. Implementation in T-PR4b-3.
+        const intent = event.data.object as Stripe.PaymentIntent;
+        const paymentIntentId = intent?.id;
+        strapi.log.info(
+            `[GAP-1] reconcilePaymentFailed event.id=${event.id} ` +
+            `paymentIntentId=${paymentIntentId} (T-PR4b-3 will wire full reconciliation)`
+        );
+        return { received: true };
+    },
+
+    /**
+     * [GAP-1 PR4b T-PR4b-1] Extract a redacted failure audit from a
+     * Stripe PaymentIntent's `last_payment_error`.
+     *
+     * Returns the raw `{ code, failure_message }` pair that
+     * `redactPaymentError(...)` will then whitelist to its safe shape.
+     *
+     * Implementation in T-PR4b-3 (currently returns the safe defaults so
+     * the skeleton compiles and the file remains buildable).
+     */
+    extractPaymentFailureAudit(paymentIntent: Stripe.PaymentIntent): { code: string; failure_message: string } {
+        const raw = (paymentIntent as any)?.last_payment_error || null;
+        return this.redactPaymentError(raw);
+    },
+
+    /**
+     * [GAP-1 PR4b T-PR4b-1 / R-PFS-5 / S-PFS-5] Redact Stripe's raw
+     * `last_payment_error` to a SAFE shape containing ONLY
+     * `{ code, failure_message }`.
+     *
+     * MUST NEVER return `decline_code`, `payment_method_details`, PAN,
+     * expiry, CVV, billing address, or any nested object. The strict
+     * shape is enforced by T-TG-5 (redaction contract test) in T-PR4b-5.
+     *
+     * Implementation in T-PR4b-5 (strict whitelist). Currently returns
+     * the safe defaults so the skeleton compiles.
+     */
+    redactPaymentError(raw: any): { code: string; failure_message: string } {
+        // TODO (T-PR4b-5): strict whitelist.
+        return {
+            code: 'unknown',
+            failure_message: 'Unknown failure',
+        };
     },
 }));
