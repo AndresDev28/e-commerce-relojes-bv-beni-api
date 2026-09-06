@@ -18,7 +18,8 @@ export type OrderStatus =
     | 'delivered'
     | 'cancelled'
     | 'refunded'
-    | 'cancellation_requested';
+    | 'cancellation_requested'
+    | 'payment_failed';
 
 export interface RefundPayload {
     paymentIntentId: string;
@@ -58,9 +59,24 @@ export interface WebhookEmailPayload {
  *
  * Active states: pending, paid, processing, shipped, cancellation_requested, delivered
  * Terminal states: cancelled, refunded
+ *
+ * [GAP-1 PR1+2 T-PR1+2-7] Lock the payment_failed matrix per R-PFS-2:
+ *   - `pending → payment_failed` (failure while pending)
+ *   - `payment_failed → pending` (retry succeeded; webhook or manual)
+ *   - `payment_failed → cancelled` (user abandons after failure)
+ *   - direct recovery (`payment_failed → paid`, `payment_failed → processing|...|refunded`) is forbidden.
+ *   - `paid → payment_failed` is also forbidden (R-PFS-2: no direct
+ *     recovery). The stock-depletion edge for S-OSA-6 is added later in
+ *     PR3 via D-DESIGN-5 with a documented exception.
  */
 const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-    pending: ['paid', 'cancelled', 'refunded', 'cancellation_requested'],
+    pending: [
+        'paid',
+        'cancelled',
+        'refunded',
+        'cancellation_requested',
+        'payment_failed',
+    ],
     paid: ['processing', 'cancelled', 'refunded', 'cancellation_requested'],
     processing: ['shipped', 'cancelled', 'refunded', 'cancellation_requested'],
     cancellation_requested: ['cancelled', 'refunded', 'processing'],
@@ -68,6 +84,7 @@ const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
     delivered: ['processing'], // Allow revert if shipment fails after delivery
     cancelled: [],
     refunded: [],
+    payment_failed: ['pending', 'cancelled'],
 };
 
 /**

@@ -44,11 +44,18 @@
         "delivered",
         "cancelled",
         "refunded",
-        "cancellation_requested"
+        "cancellation_requested",
+        "payment_failed"
       ]
     },
     "paymentIntentId": {
-      "type": "string"
+      "type": "string",
+      "unique": true
+    },
+    "stockDeducted": {
+      "type": "boolean",
+      "required": true,
+      "default": false
     },
     "user": {
       "type": "relation",

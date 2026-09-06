@@ -591,6 +591,7 @@ export async function createTestOrder(data?: {
         shipping: data?.shipping || 10.00,
         total: data?.total || 109.99,
         orderStatus: data?.orderStatus || 'pending',
+        stockDeducted: false, // [GAP-1 PR1+2] Marker default — true only after a webhook decrement
         user: { connect: [userId] } as any, // 3. Conectar usuario (sintaxis Strapi v5)
         publishedAt: new Date().toISOString(),
       },
