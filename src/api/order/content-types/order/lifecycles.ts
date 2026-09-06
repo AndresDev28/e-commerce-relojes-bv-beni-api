@@ -154,6 +154,24 @@ export default {
    * afterCreate hook
    * [ORD-33] Create initial status history entry when order is created
    * [REF-09] Decrement product stock
+   * [GAP-1 PR4a T-PR4a-7] Email exactly-once across shell + enrichment.
+   *
+   * Email dedup contract (D-DESIGN-7):
+   *   - Shell created by the webhook (`payment_intent.succeeded` with no
+   *     matching Order, see `services/stripe-webhook.ts:handlePaymentIntentSucceeded`)
+   *     has `orderStatus: 'paid'` and `items: []`. The condition below
+   *     fires `sendOrderEmailWebhook(..., isNewOrder: true)` ONCE here.
+   *   - When the frontend UPSERT enriches the shell with items later
+   *     (Gap #3 follow-up), `afterUpdate` sees `previousStatus ===
+   *     newStatus === 'paid'` and the early-return at line ~349 below
+   *     skips history/email/restoration. NO duplicate initial-purchase
+   *     email is sent.
+   *   - For client-first orders (`pending` → webhook transition → `paid`),
+   *     `afterCreate` here sends NO email (gate: orderStatus !== paid
+   *     when pending). The status-change email fires at `afterUpdate`
+   *     with `isNewOrder: false`.
+   *   - Net effect: every Order gets exactly one initial-purchase email,
+   *     regardless of arrival order.
    */
   async afterCreate(event) {
     const { result } = event
@@ -276,10 +294,10 @@ export default {
 
       strapi.log.info(`[ORD-22/33] afterUpdate: Order ${result.orderId} | previousStatus = ${previousStatus} | newStatus = ${newStatus} | hasState = ${!!event.state}`)
 
-      // [GAP-1 PR3 T-PR3-7] Webhook enrichment gate. Fires when an Order
-      // was created as a shell (or with empty items) by the webhook and
-      // is later enriched by a frontend UPSERT (Gap #3 follow-up). The
-      // gate is what makes the stock decrement authoritative:
+      // [GAP-1 PR3 T-PR3-7] [GAP-1 PR4a T-PR4a-5] Webhook enrichment gate.
+      // Fires when an Order is updated to `paid` with `!stockDeducted` and
+      // has decrementable items. The gate is what makes the stock
+      // decrement authoritative:
       //   - orderStatus === 'paid' (already authorized)
       //   - stockDeducted === false (no claim yet)
       //   - items have at least one entry with a product `id` (the
@@ -287,10 +305,20 @@ export default {
       //     keyed by `productId` are NOT enrichment updates and must
       //     fall through to the normal status-history + email path)
       //   - items.length > 0 (now we know what to decrement)
+      //
       // The helper is CAS-idempotent, so concurrent enrichment calls
-      // decrement exactly once. After the gate fires, we early-return
-      // to avoid duplicate status-history/email side effects on the
-      // enrichment update (status didn't change; D-DESIGN-7 dedup row 3).
+      // decrement exactly once.
+      //
+      // Two arrival orders share this gate:
+      //   - SHELL ENRICHMENT (Gap #3 UPSERT): Order was created as
+      //     `paid` + `items: []` by the webhook (T-PR4a-7). Frontend
+      //     UPSERT later adds items. Status is unchanged — the
+      //     `previousStatus === newStatus` early-return below skips
+      //     history/email (D-DESIGN-7 dedup row 3).
+      //   - WEBHOOK TRANSITION (T-PR4a-5): Order was created as
+      //     `pending` + full items by the client. Webhook transitions
+      //     to `paid`. Status CHANGED — falls through to the normal
+      //     history + email path below.
       const hasDecrementableItems =
         Array.isArray(result.items) &&
         result.items.length > 0 &&
@@ -341,9 +369,12 @@ export default {
           }
         }
 
-        // Early-return: enrichment updates don't change status, so we
-        // skip history/email/restoration side-effects.
-        return
+        // [GAP-1 PR4a T-PR4a-5] Do NOT early-return here. The unchanged
+        // status check below correctly handles the shell-enrichment case
+        // (status stayed `paid` → skip history/email). For the webhook
+        // transition case (status changed `pending → paid`), we fall
+        // through to the normal history + email path. The CAS marker
+        // already prevents double-decrement.
       }
 
       if (previousStatus === newStatus) {
