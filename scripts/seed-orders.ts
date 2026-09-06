@@ -113,6 +113,7 @@ async function seedTestData() {
         shipping: 0,
         total: products[0].price,
         user: users[0].id,
+        stockDeducted: false,
       }
     });
     orders.push(order);
@@ -131,6 +132,7 @@ async function seedTestData() {
         shipping: 0,
         total: products[1].price,
         user: users[1].id,
+        stockDeducted: false,
       }
     });
     orders.push(order);
@@ -149,6 +151,7 @@ async function seedTestData() {
         shipping: 0,
         total: products[2].price,
         user: users[2].id,
+        stockDeducted: false,
       }
     });
     orders.push(order);

@@ -471,7 +471,7 @@ export interface ApiOrderOrder extends Struct.CollectionTypeSchema {
       Schema.Attribute.Required &
       Schema.Attribute.DefaultTo<'pending'>;
     paymentInfo: Schema.Attribute.JSON;
-    paymentIntentId: Schema.Attribute.String;
+    paymentIntentId: Schema.Attribute.String & Schema.Attribute.Unique;
     publishedAt: Schema.Attribute.DateTime;
     shipment: Schema.Attribute.Relation<'oneToOne', 'api::shipment.shipment'>;
     shippedAt: Schema.Attribute.Date;
