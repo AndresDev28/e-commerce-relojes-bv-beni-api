@@ -52,6 +52,19 @@ export class UpsertConflictError extends Error {
     }
 }
 
+// [GAP-3 A-11] Surfaced when the bounded unique-retry is exhausted
+// (or the constraint is on a non-recoverable field). Distinct from
+// UpsertConflictError so the controller can map both to 409 with the
+// correct envelope and trace id.
+export class UpsertUniqueExhaustedError extends Error {
+    traceId: string;
+    constructor(message: string, traceId: string) {
+        super(message);
+        this.name = 'UpsertUniqueExhaustedError';
+        this.traceId = traceId;
+    }
+}
+
 // [GAP-3 A-4] Status gate allowlist (enrich). `pending` is in the set
 // because R-COU-10 demands the first fallback-insert be re-enrichable
 // by an identical retry PUT. `cancelled` and `refunded` are terminal —
@@ -74,6 +87,31 @@ function sanitizePaymentInfo(paymentInfo: any): Record<string, any> {
         }
     }
     return result;
+}
+
+// [GAP-3 A-11] Detect a unique-constraint violation across engines.
+// Returns true for SQLITE_CONSTRAINT_UNIQUE, Postgres 23505, and
+// MySQL ER_DUP_ENTRY (1062). Also matches the human-readable fallback
+// because some Strapi error wrappers strip the `code` field.
+export function isUniqueConstraintViolation(err: any): boolean {
+    if (!err) return false;
+    const code = (err as any).code || (err as any).errno;
+    const message = typeof (err as any).message === 'string' ? (err as any).message : '';
+    if (
+        code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+        code === 'SQLITE_CONSTRAINT_PRIMARYKEY' ||
+        code === 23505 ||
+        code === 'ER_DUP_ENTRY' ||
+        code === 1062
+    ) {
+        return true;
+    }
+    return (
+        message.includes('UNIQUE constraint failed') ||
+        message.includes('duplicate key value') ||
+        message.includes('orders_order_id_unique') ||
+        message.includes('orders_payment_intent_id_unique')
+    );
 }
 
 function validateRequired(payload: any, traceId: string): void {
@@ -131,6 +169,68 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
 
         const sanitizedPaymentInfo = sanitizePaymentInfo(payload.paymentInfo);
 
+        // [GAP-3 A-11] Bounded unique-retry (R-COU-9). The trx envelope
+        // is re-entered up to MAX_UNIQUE_RETRIES times on a unique
+        // constraint violation. The retry's findFirst sees the winner's
+        // committed row and converges to the enrich path. NEVER loops
+        // — if a second violation surfaces, we propagate as 409 to
+        // protect against pathological writers.
+        const MAX_UNIQUE_RETRIES = 1;
+        let attempt = 0;
+
+        while (true) {
+            try {
+                return await this._runUpsertTransaction(
+                    orderId,
+                    payload,
+                    authUserId,
+                    traceId,
+                    sanitizedPaymentInfo,
+                );
+            } catch (err: any) {
+                if (isUniqueConstraintViolation(err) && attempt < MAX_UNIQUE_RETRIES) {
+                    attempt++;
+                    strapi.log.warn(
+                        `[GAP-3] upsertByOrderId unique-violation, bounded retry ${attempt}/${MAX_UNIQUE_RETRIES} ` +
+                        `orderId=${orderId} traceId=${traceId}`,
+                    );
+                    continue;
+                }
+                // Second unique violation or non-recoverable constraint:
+                // surface as 409 with traceId. The controller maps
+                // UpsertUniqueExhaustedError to the same Strapi envelope
+                // as UpsertConflictError, but keeps the distinct name
+                // for ops grep + metrics.
+                if (isUniqueConstraintViolation(err)) {
+                    strapi.log.error(
+                        `[GAP-3] upsertByOrderId unique-violation exhausted retries ` +
+                        `orderId=${orderId} traceId=${traceId} attempts=${attempt + 1}`,
+                    );
+                    throw new UpsertUniqueExhaustedError(
+                        'Concurrent write lost on orderId/paymentIntentId; please retry',
+                        traceId,
+                    );
+                }
+                // Non-unique error: surface as-is (UpsertConflictError →
+                // 409; anything else → 500 via controller).
+                throw err;
+            }
+        }
+    },
+
+    /**
+     * [GAP-3 A-11] Internal: single trx envelope. Extracted so the
+     * bounded-retry loop in `upsertOrderByOrderId` can re-enter on a
+     * unique-violation abort. Each iteration opens a fresh trx; the
+     * previous one is rolled back by `strapi.db.transaction` on throw.
+     */
+    async _runUpsertTransaction(
+        orderId: string,
+        payload: any,
+        authUserId: number | string,
+        traceId: string,
+        sanitizedPaymentInfo: Record<string, any>,
+    ) {
         // [GAP-3 A-2] Transactional envelope. Document Service calls inside
         // join the ambient trx (verified at stripe-webhook.ts:136 and
         // services/order.ts:112 via the @strapi/database ALS hook).

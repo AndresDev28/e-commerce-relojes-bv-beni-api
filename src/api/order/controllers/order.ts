@@ -24,6 +24,7 @@ import {
     UpsertBadRequestError,
     UpsertForbiddenError,
     UpsertConflictError,
+    UpsertUniqueExhaustedError,
 } from '../services/upsert'
 
 /**
@@ -443,6 +444,22 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
         return;
       }
       if (error instanceof UpsertConflictError) {
+        ctx.status = 409;
+        ctx.body = {
+          data: null,
+          error: {
+            status: 409,
+            name: 'ConflictError',
+            message: error.message,
+            details: { traceId: error.traceId },
+          },
+        };
+        return;
+      }
+      if (error instanceof UpsertUniqueExhaustedError) {
+        // [GAP-3 A-11] Bounded retry exhausted — same 409 envelope as
+        // ConflictError, distinct name for ops grep + metrics. Same
+        // manual assembly as A-7 (HttpError is abstract in 5.23.5).
         ctx.status = 409;
         ctx.body = {
           data: null,
