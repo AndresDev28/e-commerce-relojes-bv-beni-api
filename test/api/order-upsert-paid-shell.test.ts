@@ -86,19 +86,16 @@ describe('[GAP-3] PUT /orders/by-order-id/:orderId — paid-shell enrichment', (
         // Invoke the seam. We don't assert on the return value here; this
         // test only proves (a) the service is registered with the expected
         // shape and (b) every call enters strapi.db.transaction.
-        let callError: unknown = null
         try {
             await upsertService.upsertOrderByOrderId(orderId, payload, testUser.id, 'trace-seam')
-        } catch (err) {
-            callError = err
+        } catch {
+            // RED-state swallow: the placeholder may throw because the
+            // service is not yet implemented. The transaction-spy
+            // assertion below is the binding contract for this task.
         }
 
         expect(transactionSpy).toHaveBeenCalled()
         expect(transactionSpy.mock.calls.length).toBeGreaterThanOrEqual(1)
-        // The call SHOULD have produced some result or error — the spy is
-        // the binding constraint, not the return value (this is RED).
-        // eslint-disable-next-line no-unused-expressions
-        callError // placeholder; consumed below when GREEN lands
     })
 
     // ============================================================
@@ -184,19 +181,29 @@ describe('[GAP-3] PUT /orders/by-order-id/:orderId — paid-shell enrichment', (
         // 6. Stock decrement: exactly one CAS decrement by item.quantity (A-13).
         //    `stockDeducted` flips to true and product stock falls by 2.
         expect(after.stockDeducted).toBe(true)
-        const productAfter: any = await strapi.entityService.findOne(
-            'api::product.product',
-            product.id,
-            { fields: ['stock'] },
-        )
-        expect(productAfter.stock).toBe(initialStock - 2)
+        // [GAP-3] Use the Query Engine (not entityService) to read product
+        // stock — entityService caches the row from createTestProduct, and
+        // the raw-SQL decrement in the helper bypasses the cache. The
+        // Query Engine hits the DB directly. (Same pattern as
+        // services/order.ts:267.)
+        const productRow: any = await strapi.db.query('api::product.product').findOne({
+            where: { id: product.id },
+            select: ['stock'],
+        })
+        expect(productRow.stock).toBe(initialStock - 2)
 
         // 7. Zero email webhook dispatches on enrichment (status preserved → no
         //    email/history). afterUpdate's `previousStatus === newStatus`
-        //    early-return is the gate.
+        //    early-return is the gate. Strapi's own analytics call is
+        //    stubbed via `mockFetch` but we filter it out — we only care
+        //    about the `/api/send-order-email` URL.
         // Settle async lifecycles.
         await new Promise((resolve) => setTimeout(resolve, 100))
-        expect(mockFetch).not.toHaveBeenCalled()
+        const emailCalls = mockFetch.mock.calls.filter((call: any[]) => {
+            const url = call[0]
+            return typeof url === 'string' && url.includes('/api/send-order-email')
+        })
+        expect(emailCalls).toHaveLength(0)
     })
 
     // ============================================================
