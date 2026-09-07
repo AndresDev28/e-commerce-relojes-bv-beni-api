@@ -113,24 +113,36 @@ export default factories.createCoreService('api::order.order', ({ strapi }) => (
 
             const absQty = Math.abs(quantityChange);
 
-            const updateBuilder = (ambientTrx ?? strapi.db.connection)('products')
-                .where('id', numericId)
-                .update({
-                    stock: strapi.db.connection.raw(
-                        quantityChange < 0 ? 'stock - ?' : 'stock + ?',
-                        [absQty]
-                    ),
-                });
-
-            if (quantityChange < 0) {
-                updateBuilder.where('stock', '>=', absQty);
-            }
-
-            if (ambientTrx) {
-                updateBuilder.transacting(ambientTrx);
-            }
-
-            const affected: number = await updateBuilder;
+            // [GAP-1 PR3 T-PR3-3] Raw SQL through the active connection
+            // (trx or default). This bypasses knex's query-builder state
+            // machine and is the only path that produced correct
+            // placeholder binding under the SQLite ambient-trx case
+            // observed during GAP-3 PR1 RED→GREEN work.
+            //
+            // Decrement: `stock = stock - N WHERE … AND stock >= N` — the
+            // `stock >= N` guard makes the decrement race-safe (insufficient
+            // stock → 0 affected rows, no UPDATE).
+            // Increment: `stock = stock + N WHERE …` — no guard, restores
+            // are unconditional.
+            //
+            // Return-value handling: `connection.raw(UPDATE …)` resolves
+            // to different shapes per engine — SQLite (better-sqlite3
+            // driver) returns the numeric `changes` count directly, while
+            // node-postgres returns a `{ rowCount }` object. We accept
+            // both and fall back to 0 on the unknown shape.
+            const connection = ambientTrx ?? strapi.db.connection;
+            const operator = quantityChange < 0 ? '-' : '+';
+            const sql = quantityChange < 0
+                ? `UPDATE products SET stock = stock ${operator} ? WHERE id = ? AND stock >= ?`
+                : `UPDATE products SET stock = stock ${operator} ? WHERE id = ?`;
+            const bindings = quantityChange < 0
+                ? [absQty, numericId, absQty]
+                : [absQty, numericId];
+            const affected: number = await connection.raw(sql, bindings).then((res: any) => {
+                if (typeof res === 'number') return res;
+                if (res && typeof res === 'object') return res.changes ?? res.rowCount ?? 0;
+                return 0;
+            });
             const ok = affected > 0;
 
             if (ok) {
