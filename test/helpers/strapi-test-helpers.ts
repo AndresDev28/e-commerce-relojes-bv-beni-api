@@ -117,6 +117,11 @@ async function setupTestPermissions(strapi: Core.Strapi) {
       'api::order.order.findOne',
       'api::order.order.create',
       'api::order.order.requestCancellation',
+      // [GAP-3] PR1 — grant the authenticated role access to the new
+      // PUT /orders/by-order-id/:orderId action so the test JWT can
+      // drive the endpoint. Production deploy must mirror this grant
+      // in the users-permissions Roles UI.
+      'api::order.order.upsertByOrderId',
     ]
 
     for (const action of orderPermissions) {

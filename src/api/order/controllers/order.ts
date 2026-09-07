@@ -20,6 +20,11 @@
 
 import { factories } from '@strapi/strapi'
 import Stripe from 'stripe'
+import {
+    UpsertBadRequestError,
+    UpsertForbiddenError,
+    UpsertConflictError,
+} from '../services/upsert'
 
 /**
  * Helper function to get user role type
@@ -338,7 +343,7 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
       return ctx.send(response);
     } catch (error: any) {
       const errorMessage = error.message || '';
-      if (errorMessage.includes('signature verification failed') || 
+      if (errorMessage.includes('signature verification failed') ||
           errorMessage.includes('raw body') ||
           errorMessage.includes('No signatures found') ||
           errorMessage.includes('webhook') ||
@@ -348,6 +353,125 @@ export default factories.createCoreController('api::order.order', ({ strapi }) =
         return ctx.badRequest(error.message);
       }
       return ctx.internalServerError(error.message);
+    }
+  },
+
+  /**
+   * PUT /api/orders/by-order-id/:orderId
+   *
+   * [GAP-3] Atomic UPSERT-by-orderId for the deferred Gap #1 enrichment
+   * half. Thin delegation shim — see `services/upsert.ts` for the
+   * transactional find/gates/merge/write logic.
+   *
+   * Appended AFTER all existing controller methods so the no-touch
+   * boundaries (`find`/`findOne`/update/`requestCancellation`/`stripeWebhook`)
+   * stay byte-identical.
+   */
+  async upsertByOrderId(ctx) {
+    // [GAP-3 A-6] X-Trace-Id: read inbound header or generate. Set the
+    // response header FIRST so it appears on error responses too —
+    // Strapi's errors middleware runs outside the controller.
+    const inbound = ctx.request.headers['x-trace-id'];
+    const traceId =
+      typeof inbound === 'string' && inbound.length > 0
+        ? inbound
+        : (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`);
+    ctx.set('X-Trace-Id', String(traceId));
+
+    // [GAP-3 A-10] Auth — `ctx.state.user.id` is the sole identity authority.
+    const authUserId = ctx.state.user?.id;
+    if (!authUserId) {
+      return ctx.unauthorized('You must be logged in to upsert an order');
+    }
+
+    const orderId = ctx.params?.orderId;
+    const payload = ctx.request?.body || {};
+
+    try {
+      const upsertService = strapi.service('api::order.upsert');
+      const order = await upsertService.upsertOrderByOrderId(
+        orderId,
+        payload,
+        authUserId,
+        String(traceId),
+      );
+
+      return {
+        data: {
+          id: order.documentId,
+          attributes: order,
+        },
+        meta: {},
+      };
+    } catch (error: any) {
+      // [GAP-3 A-7] Map typed marker errors to HTTP 4xx. Strapi 5.23.5
+      // has no `ctx.conflict` (verified in @strapi/utils/dist/types.d.ts
+      // koa augmentations) and `HttpError` from @strapi/utils is the
+      // abstract base class — instantiating it directly throws
+      // "cannot construct abstract class" (verified in
+      // http-errors/index.js:114). The cleanest portable approach is
+      // `ctx.status` + `ctx.body` to manually produce the
+      // `{data:null,error:{status,name,message,details:{traceId}}}` shape
+      // Strapi's errors middleware would produce. This mirrors the
+      // existing `requestCancellation` action's manual error mapping
+      // (controllers/order.ts:309-320) and keeps the file's no-touch
+      // boundaries untouched.
+      if (error instanceof UpsertBadRequestError) {
+        ctx.status = 400;
+        ctx.body = {
+          data: null,
+          error: {
+            status: 400,
+            name: 'BadRequestError',
+            message: error.message,
+            details: { traceId: error.traceId },
+          },
+        };
+        return;
+      }
+      if (error instanceof UpsertForbiddenError) {
+        ctx.status = 403;
+        ctx.body = {
+          data: null,
+          error: {
+            status: 403,
+            name: 'ForbiddenError',
+            message: error.message,
+            details: { traceId: error.traceId },
+          },
+        };
+        return;
+      }
+      if (error instanceof UpsertConflictError) {
+        ctx.status = 409;
+        ctx.body = {
+          data: null,
+          error: {
+            status: 409,
+            name: 'ConflictError',
+            message: error.message,
+            details: { traceId: error.traceId },
+          },
+        };
+        return;
+      }
+      // Unexpected — log and surface 500 with the same traceId so
+      // operators can correlate logs ↔ responses.
+      strapi.log.error(
+        `[GAP-3] upsertByOrderId unexpected error orderId=${orderId} traceId=${traceId}:`,
+        error,
+      );
+      ctx.status = 500;
+      ctx.body = {
+        data: null,
+        error: {
+          status: 500,
+          name: 'InternalServerError',
+          message: 'Internal server error',
+          details: { traceId: String(traceId) },
+        },
+      };
+      return;
     }
   }
 }));
