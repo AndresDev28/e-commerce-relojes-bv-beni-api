@@ -172,7 +172,16 @@ export async function setupStrapi() {
   delete process.env.CLOUDINARY_SECRET
 
   // 1. Setear variables de entorno para testing
+  // [V-S1] When DATABASE_CLIENT=postgres is already set in the shell env
+  // (vitest.config.pg.ts via `npm run test:pg:smoke`), preserve the
+  // PG-specific vars (DATABASE_CLIENT, DATABASE_FILENAME) and don't
+  // overwrite them with SQLite defaults. The existing test:only path
+  // never pre-sets DATABASE_CLIENT so the override fires as before.
+  const isPgSmoke = process.env.DATABASE_CLIENT === 'postgres'
   Object.entries(TEST_ENV_VARS).forEach(([key, value]) => {
+    if (isPgSmoke && (key === 'DATABASE_CLIENT' || key === 'DATABASE_FILENAME')) {
+      return
+    }
     process.env[key] = value
   })
 
@@ -181,7 +190,8 @@ export async function setupStrapi() {
     console.log('🔧 Creating Strapi instance...')
 
     try {
-      // 3. Inicializar base de datos SQLite en memoria
+      // 3. Inicializar base de datos SQLite en memoria (or PG if isPgSmoke
+      // — see the DATABASE_CLIENT guard above at line 180).
       // Use compiled files from dist/ instead of src/
       const strapi = await createStrapi({
         distDir: './dist'
