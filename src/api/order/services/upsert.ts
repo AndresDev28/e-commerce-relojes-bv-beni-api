@@ -93,6 +93,15 @@ function sanitizePaymentInfo(paymentInfo: any): Record<string, any> {
 // Returns true for SQLITE_CONSTRAINT_UNIQUE, Postgres 23505, and
 // MySQL ER_DUP_ENTRY (1062). Also matches the human-readable fallback
 // because some Strapi error wrappers strip the `code` field.
+//
+// Strapi 5.23.5 wrapping (V-S1 finding): `strapi.entityService.create()` and
+// `strapi.documents(...).create()` funnel raw DB unique-violations through
+// `@strapi/database` Query Engine into `ValidationError`. The wrapped
+// shape carries `code: 'STRAPI_VALIDATION_ERROR'` (NOT 23505) and a message
+// like "Validation failed", with the actual unique-constraint cause living
+// in `details.errors[*].message` (e.g. "This attribute must be unique").
+// Without this check, the bounded retry silently fails to fire on real PG
+// production races — V-S1 smoke test exposed this gap.
 export function isUniqueConstraintViolation(err: any): boolean {
     if (!err) return false;
     const code = (err as any).code || (err as any).errno;
@@ -106,12 +115,24 @@ export function isUniqueConstraintViolation(err: any): boolean {
     ) {
         return true;
     }
-    return (
+    if (
         message.includes('UNIQUE constraint failed') ||
         message.includes('duplicate key value') ||
         message.includes('orders_order_id_unique') ||
         message.includes('orders_payment_intent_id_unique')
-    );
+    ) {
+        return true;
+    }
+    // Strapi 5.23.5 wrapped ValidationError — match the per-field cause.
+    const details = (err as any).details;
+    if (details && Array.isArray(details.errors)) {
+        return details.errors.some(
+            (e: any) =>
+                typeof e?.message === 'string' &&
+                /must be unique|unique constraint/i.test(e.message),
+        );
+    }
+    return false;
 }
 
 function validateRequired(payload: any, traceId: string): void {
