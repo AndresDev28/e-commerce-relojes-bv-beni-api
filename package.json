@@ -18,6 +18,7 @@
     "test:ui": "npm run build && vitest --ui",
     "test:coverage": "npm run build && vitest run --coverage",
     "test:only": "vitest run",
+    "test:pg:smoke": "DATABASE_CLIENT=postgres vitest run --config vitest.config.pg.ts",
     "test:scripts": "vitest run --config vitest.config.scripts.ts",
     "standardize": "node scripts/standardize-images.mjs",
     "lint": "eslint .",

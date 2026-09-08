@@ -16,6 +16,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    # [V-S1] PG smoke runs against a throwaway PG 15 service. The
+    # service is created from POSTGRES_DB and Strapi's bootstrap creates
+    # the schema on first connect — no extra "create database" step
+    # needed because PG already provisioned relojes_bv_beni_pg_smoke.
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: strapi
+          POSTGRES_PASSWORD: strapi-smoke-test-password
+          POSTGRES_DB: relojes_bv_beni_pg_smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -37,3 +56,17 @@ jobs:
 
       - name: Test
         run: npm run test:only
+
+      - name: Test (PG smoke)
+        # [V-S1] Exercises the real PG unique-violation path that SQLite
+        # can't (SQLite serializes globally). See verify-report.md
+        # warning V-S1 + openspec/changes/sprint-5-stripe-upsert-backend/.
+        run: npm run test:pg:smoke
+        env:
+          DATABASE_CLIENT: postgres
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_PORT: '5432'
+          DATABASE_NAME: relojes_bv_beni_pg_smoke
+          DATABASE_USERNAME: strapi
+          DATABASE_PASSWORD: strapi-smoke-test-password
+          DATABASE_SSL: 'false'
