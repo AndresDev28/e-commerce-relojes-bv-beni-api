@@ -136,3 +136,7 @@ telemetry-id
 relojes-bv-beni-api@0.1.0
 strapi
 .codegraph/
+
+# Local DB backups (created by scripts/backup-db.sh)
+backups/
+*.backup.log

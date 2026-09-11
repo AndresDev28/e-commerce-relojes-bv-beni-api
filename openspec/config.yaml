@@ -1,0 +1,48 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Strapi 5.23.5 (headless CMS) + TypeScript 5 (strict: false) + Node 22
+  DB: PostgreSQL (dev/prod via DATABASE_URL), SQLite in-memory for tests (better-sqlite3)
+  Payments: Stripe ^20.3.1 — webhook handler at src/api/order/services/stripe-webhook.ts
+  Uploads: Cloudinary (production), local (development)
+  Frontend: Next.js (separate repo) — webhook-based emails via FRONTEND_URL/api/send-order-email
+  Architecture: Strapi content-type APIs (api::content-type.content-type), Document Service API, lifecycle hooks
+  Prior init: Engram cache obs #320 (2026-06-10, mode engram) — reconfigured to openspec for cross-repo consistency
+
+testing:
+  strict_tdd: true
+  test_command: "npm run test:only"
+  build_command: "npm run build"
+  coverage_command: "npm run test:coverage"
+  framework: vitest
+  layers:
+    unit: true
+    integration: true
+    e2e: false
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Never modify docs/roadmapToProduction.md (MIRRORED; source of truth is the frontend repo)
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Include sequence diagrams for complex flows
+    - Document architecture decisions with rationale
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+  apply:
+    guidelines:
+      - Follow existing Strapi v5 patterns (connect syntax for relations, Document Service API)
+      - Run `npm run test:only` after a build; use `npm run test` for a fresh build+test
+      - Respect DISABLE_EMAIL_NOTIFICATIONS and STRIPE_WEBHOOK_SECRET environment contracts
+    tdd: true
+    test_command: "npm run test:only"
+  verify:
+    test_command: "npm run test:only"
+    build_command: "npm run build"
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas
