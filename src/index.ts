@@ -137,6 +137,9 @@ export default {
         { action: 'api::order.order.findOne', enabled: true },
         { action: 'api::order.order.create', enabled: true },
         { action: 'api::order.order.update', enabled: true },
+        // [F1] Clean installs must grant the checkout UPSERT action here —
+        // the sole grant path (R-COU-11/12). Do not re-add it in tests.
+        { action: 'api::order.order.upsertByOrderId', enabled: true },
       ];
 
       for (const perm of orderPermissions) {
