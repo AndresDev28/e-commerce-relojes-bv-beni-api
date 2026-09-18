@@ -1,0 +1,18 @@
+[Unit]
+Description=Strapi DB + Cloudinary inventory backup
+Documentation=file:///home/adreidev/dev/personal-projects/e-commerce-relojes-bv-beni-api/BACKUP.md
+
+[Service]
+Type=oneshot
+User=adreidev
+WorkingDirectory=/home/adreidev/dev/personal-projects/e-commerce-relojes-bv-beni-api
+ExecStart=/home/adreidev/dev/personal-projects/e-commerce-relojes-bv-beni-api/scripts/backup-db.sh
+StandardOutput=append:/home/adreidev/.cache/strapi-backup.log
+StandardError=append:/home/adreidev/.cache/strapi-backup.log
+Nice=10
+# Avoid running if Docker isn't up (will silently fail otherwise)
+# Timeout: pg_dump should finish in <30s, Cloudinary inventory <2min
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+[Unit]
+Description=Daily Strapi DB + Cloudinary backup schedule
+Documentation=file:///home/adreidev/dev/personal-projects/e-commerce-relojes-bv-beni-api/BACKUP.md
+
+[Timer]
+# Run daily at 03:00 (off-peak; postgres is idle)
+OnCalendar=*-*-* 03:00:00
+# Randomize delay to avoid thundering herd if multiple machines share infra
+RandomizedDelaySec=60
+# Persistent across reboots
+Persistent=true
+# If missed (system was off), run at next boot
+Persistent=true
+
+[Install]
+WantedBy=timers.target
